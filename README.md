@@ -21,7 +21,7 @@ AwsApiGateway@0.1.0::myApiGateway:
         function: ${comp:myLambda.arn}
 ```
 
-### Complex example
+### Detailed example
 
 ```yaml
 name: serverless-components
