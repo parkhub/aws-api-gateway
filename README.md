@@ -1,6 +1,6 @@
 # AwsApiGateway
 
-A Serverless Component that provisions an API Gateway.
+A Serverless Component that provisions an AWS API Gateway API.
 
 ## Usage
 
