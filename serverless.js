@@ -16,7 +16,7 @@ class AwsApiGateway extends Component {
       credentials: this.context.credentials.aws
     })
 
-    const awsIamRole = await this.load('AwsIamRole')
+    const awsIamRole = await this.load('@serverless/aws-iam-role')
     config.role = config.role || (await awsIamRole(config))
 
     const { name, role, routes } = config

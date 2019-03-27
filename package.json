@@ -1,6 +1,6 @@
 {
   "name": "@serverless/aws-api-gateway",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "main": "./serverless.js",
   "publishConfig": {
     "access": "public"
@@ -12,7 +12,7 @@
   "author": "Serverless, Inc.",
   "license": "MIT",
   "dependencies": {
-    "@serverless/aws-iam-role": "^0.1.1",
+    "@serverless/aws-iam-role": "^0.1.0",
     "@serverless/components": "^0.1.0",
     "aws-sdk": "^2.0.0",
     "ramda": "^0.26.0"
