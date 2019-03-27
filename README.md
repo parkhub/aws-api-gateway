@@ -9,11 +9,11 @@ A Serverless Component that provisions an AWS API Gateway API.
 ```yaml
 name: serverless-components
 
-AwsLambda@0.1.1::myLambda:
+AwsLambda@0.1.3::myLambda:
   name: ${name}-lambda
   code: ./code
 
-AwsApiGateway@0.1.0::myApiGateway:
+AwsApiGateway@0.1.2::myApiGateway:
   name: ${name}-api-gateway
   routes:
     /foo:
@@ -30,18 +30,24 @@ AwsIamRole@0.1.1::myApigRole:
   name: ${name}-apig-role
   service: 'apigateway.amazonaws.com'
 
-AwsLambda@0.1.1::myLambda:
-  name: ${name}-lambda
+AwsLambda@0.1.3::myGetLambda:
+  name: ${name}-get-lambda
   code: ./code
 
-AwsApiGateway@0.1.0::myApiGateway:
+AwsLambda@0.1.3::myPutLambda:
+  name: ${name}-put-lambda
+  code: ./code
+
+AwsApiGateway@0.1.2::myApiGateway:
   name: ${name}-api-gateway
   role: ${comp:myApigRole}
   routes:
     /foo:
-      post:
-        function: ${comp:myLambda.arn}
+      get:
+        function: ${comp:myGetLambda.arn}
+        cors: true
     /foo/bar:
       get:
-        function: ${comp:myLambda.arn}
+        function: ${comp:myPutLambda.arn}
+        cors: true
 ```
