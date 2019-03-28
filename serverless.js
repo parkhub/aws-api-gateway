@@ -17,7 +17,8 @@ class AwsApiGateway extends Component {
     })
 
     const awsIamRole = await this.load('@serverless/aws-iam-role')
-    config.role = config.role || (await awsIamRole(config))
+    config.role =
+      config.role || (await awsIamRole({ ...config, service: 'apigateway.amazonaws.com' }))
 
     const { name, role, routes } = config
 
@@ -46,13 +47,18 @@ class AwsApiGateway extends Component {
   }
 
   async remove(inputs = {}) {
+    const { id } = this.state
+
+    if (!id) {
+      return
+    }
+
     const config = mergeDeepRight(defaults, inputs)
     const apig = new AWS.APIGateway({
       region: config.region,
       credentials: this.context.credentials.aws
     })
 
-    const { id } = this.state
     this.cli.status('Removing')
     await deleteApi({ apig, id })
 
