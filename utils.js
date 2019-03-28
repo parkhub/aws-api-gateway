@@ -235,6 +235,7 @@ async function updateApi({ apig, name, role, routes, id }) {
   await apig
     .putRestApi({
       restApiId: id,
+      mode: 'overwrite',
       body: Buffer.from(json, 'utf8')
     })
     .promise()
