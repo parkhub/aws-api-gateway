@@ -1,6 +1,6 @@
 # AWS ApiGateway
 
-Instantly deploy REST APIs on AWS API Gateway with very simple configuration using [Serverless Components].
+Instantly deploy REST APIs on AWS API Gateway with very simple configuration using [Serverless Components](https://github.com/serverless/components).
 
 &nbsp;
 
