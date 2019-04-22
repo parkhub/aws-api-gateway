@@ -1,7 +1,5 @@
 const { equals, forEachObjIndexed, keys, map, set, lensPath } = require('ramda')
 
-// TODO: remove hardcoding of region (e.g. like us-east-1)
-
 // "private" functions
 function getNormalizedPath(path) {
   return `/${path.replace(/^\/+/, '')}`
@@ -120,7 +118,7 @@ function getCorsOptionsConfig() {
   }
 }
 
-function getSwaggerDefinition(name, roleArn, routes) {
+function getSwaggerDefinition(name, roleArn, routes, region) {
   let paths = {}
 
   // TODO: udpate code to be functional
@@ -131,7 +129,7 @@ function getSwaggerDefinition(name, roleArn, routes) {
 
     forEachObjIndexed((methodObject, method) => {
       const normalizedMethod = getNormalizedMethod(method)
-      const uri = `arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${
+      const uri = `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${
         methodObject.function
       }/invocations`
 
@@ -176,14 +174,14 @@ function getSwaggerDefinition(name, roleArn, routes) {
   return definition
 }
 
-function generateUrl(id, region = 'us-east-1', stage = 'dev') {
+function generateUrl(id, stage, region) {
   return `https://${id}.execute-api.${region}.amazonaws.com/${stage}/`
 }
 
-function generateUrls(routes, restApiId) {
+function generateUrls(routes, restApiId, stage, region) {
   const paths = keys(routes)
   return map((path) => {
-    const baseUrl = generateUrl(restApiId)
+    const baseUrl = generateUrl(restApiId, stage, region)
     return `${baseUrl}${path.replace(/^\/+/, '')}`
   }, paths)
 }
@@ -197,8 +195,8 @@ function configChanged(prevConfig, newConfig) {
 }
 
 // "public" functions
-async function createApi({ apig, name, role, routes }) {
-  const swagger = getSwaggerDefinition(name, role.arn, routes)
+async function createApi({ apig, name, role, routes, stage, region }) {
+  const swagger = getSwaggerDefinition(name, role.arn, routes, region)
   const json = JSON.stringify(swagger)
 
   const res = await apig
@@ -210,12 +208,12 @@ async function createApi({ apig, name, role, routes }) {
   await apig
     .createDeployment({
       restApiId: res.id,
-      stageName: 'dev'
+      stageName: stage
     })
     .promise()
 
-  const url = generateUrl(res.id)
-  const urls = generateUrls(routes, res.id)
+  const url = generateUrl(res.id, stage, region)
+  const urls = generateUrls(routes, res.id, stage, region)
 
   const outputs = {
     name,
@@ -228,8 +226,8 @@ async function createApi({ apig, name, role, routes }) {
   return outputs
 }
 
-async function updateApi({ apig, name, role, routes, id }) {
-  const swagger = getSwaggerDefinition(name, role.arn, routes)
+async function updateApi({ apig, name, role, routes, id, stage, region }) {
+  const swagger = getSwaggerDefinition(name, role.arn, routes, region)
   const json = JSON.stringify(swagger)
 
   await apig
@@ -243,12 +241,12 @@ async function updateApi({ apig, name, role, routes, id }) {
   await apig
     .createDeployment({
       restApiId: id,
-      stageName: 'dev'
+      stageName: stage
     })
     .promise()
 
-  const url = generateUrl(id)
-  const urls = generateUrls(routes, id)
+  const url = generateUrl(id, stage, region)
+  const urls = generateUrls(routes, id, stage, region)
 
   const outputs = {
     name,

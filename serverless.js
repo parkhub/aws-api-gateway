@@ -20,14 +20,14 @@ class AwsApiGateway extends Component {
     config.role =
       config.role || (await awsIamRole({ ...config, service: 'apigateway.amazonaws.com' }))
 
-    const { name, role, routes } = config
+    const { name, role, routes, region } = config
 
     let outputs
     if (!configChanged(this.state, config)) {
       outputs = this.state
     } else if (inputs.name && !this.state.name) {
       this.cli.status('Creating')
-      outputs = await createApi({ apig, name, role, routes })
+      outputs = await createApi({ apig, name, role, routes, stage: this.context.stage, region })
     } else {
       this.cli.status('Updating')
       outputs = await updateApi({
@@ -35,7 +35,9 @@ class AwsApiGateway extends Component {
         name,
         role,
         routes,
-        id: this.state.id
+        id: this.state.id,
+        stage: this.context.stage,
+        region
       })
     }
 
