@@ -56,6 +56,13 @@ class AwsApiGateway extends Component {
     }
 
     const config = mergeDeepRight(defaults, inputs)
+
+    const awsIamRole = await this.load('@serverless/aws-iam-role')
+
+    // there's no need to pass names as input
+    // since it's saved in the child component state
+    await awsIamRole.remove()
+
     const apig = new AWS.APIGateway({
       region: config.region,
       credentials: this.context.credentials.aws
