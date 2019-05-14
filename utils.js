@@ -195,7 +195,7 @@ function configChanged(prevConfig, newConfig) {
 }
 
 // "public" functions
-async function createApi({ apig, name, role, routes, stage, region }) {
+async function createRoutesApi({ apig, name, role, routes, stage, region }) {
   const swagger = getSwaggerDefinition(name, role.arn, routes, region)
   const json = JSON.stringify(swagger)
 
@@ -226,7 +226,7 @@ async function createApi({ apig, name, role, routes, stage, region }) {
   return outputs
 }
 
-async function updateApi({ apig, name, role, routes, id, stage, region }) {
+async function updateRoutesApi({ apig, name, role, routes, id, stage, region }) {
   const swagger = getSwaggerDefinition(name, role.arn, routes, region)
   const json = JSON.stringify(swagger)
 
@@ -259,6 +259,31 @@ async function updateApi({ apig, name, role, routes, id, stage, region }) {
   return outputs
 }
 
+async function createTemplateApi({ apig, template, stage, region }) {
+  const json = JSON.stringify(template)
+
+  const res = await apig
+    .importRestApi({
+      body: Buffer.from(json, 'utf8')
+    })
+    .promise()
+
+  await apig
+    .createDeployment({
+      restApiId: res.id,
+      stageName: stage
+    })
+    .promise()
+
+  const url = generateUrl(res.id, stage, region)
+
+  const outputs = {
+    id: res.id,
+    url
+  }
+  return outputs
+}
+
 async function deleteApi({ apig, id }) {
   let res = false
   try {
@@ -275,9 +300,20 @@ async function deleteApi({ apig, id }) {
   return !!res
 }
 
+async function createApi({ apig, name }) {
+  const res = await apig
+    .createRestApi({
+      name
+    })
+    .promise()
+
+  return { id: res.id }
+}
+
 module.exports = {
   configChanged,
   createApi,
-  updateApi,
+  createRoutesApi,
+  updateRoutesApi,
   deleteApi
 }
