@@ -1,96 +1,94 @@
 const AWS = require('aws-sdk')
 const { mergeDeepRight } = require('ramda')
 const { Component } = require('@serverless/components')
-const { configChanged, createRoutesApi, updateRoutesApi, deleteApi, createApi } = require('./utils')
+// const { configChanged, createRoutesApi, updateRoutesApi, deleteApi, createApi } = require('./utils')
+const { validateEndpoints, createPaths, createMethods, createIntegrations } = require('./next')
 
 const defaults = {
-  name: 'serverless',
-  region: 'us-east-1'
+  apiId: 'hh9s891g8d',
+  endpoints: [
+    {
+      path: 'posts/any',
+      method: 'any',
+      function: 'abc'
+    }
+    // {
+    //   path: 'posts/',
+    //   method: 'post',
+    //   function: 'abc'
+    // }
+  ]
 }
-
 class AwsApiGateway extends Component {
   async default(inputs = {}) {
-    const config = mergeDeepRight(defaults, inputs)
-    const apig = new AWS.APIGateway({
-      region: config.region,
-      credentials: this.context.credentials.aws
+    this.cli.status('Deploying')
+
+    const fn = await this.load('@serverless/aws-lambda')
+
+    const lambdaOutputs = await fn({
+      name: 'apig-test-4',
+      code: './code',
+      handler: 'index.hello'
     })
 
-    const { name, template, routes, region } = config
-    let outputs
-
-    if (template) {
-    } else if (routes) {
-      const awsIamRole = await this.load('@serverless/aws-iam-role')
-      config.role =
-        config.role || (await awsIamRole({ ...config, service: 'apigateway.amazonaws.com' }))
-
-      if (!configChanged(this.state, config)) {
-        outputs = this.state
-      } else if (inputs.name && !this.state.name) {
-        this.cli.status('Creating')
-        outputs = await createRoutesApi({
-          apig,
-          name,
-          role: config.role,
-          routes,
-          stage: this.context.stage,
-          region
-        })
-      } else {
-        this.cli.status('Updating')
-        outputs = await updateRoutesApi({
-          apig,
-          name,
-          role: config.role,
-          routes,
-          id: this.state.id,
-          stage: this.context.stage,
-          region
-        })
-      }
-    } else {
-      // create simple API
-      if (!this.state.id) {
-        outputs = await createApi({ apig, name })
-      }
-    }
-
-    this.state = outputs
-    await this.save()
-
-    this.cli.outputs(outputs)
-    return outputs
-  }
-
-  async remove(inputs = {}) {
-    const { id } = this.state
-
-    if (!id) {
-      return
-    }
-
     const config = mergeDeepRight(defaults, inputs)
-
-    const awsIamRole = await this.load('@serverless/aws-iam-role')
-
-    // there's no need to pass names as input
-    // since it's saved in the child component state
-    await awsIamRole.remove()
 
     const apig = new AWS.APIGateway({
       region: config.region,
       credentials: this.context.credentials.aws
     })
 
-    this.cli.status('Removing')
-    await deleteApi({ apig, id })
+    const lambda = new AWS.Lambda({
+      region: config.region,
+      credentials: this.context.credentials.aws
+    })
 
-    this.state = {}
+    const { state } = this
+    const { apiId } = config
+
+    let endpoints = await validateEndpoints({ apig, apiId, endpoints: config.endpoints, state })
+
+    endpoints = await createPaths({ apig, apiId, endpoints })
+    endpoints = await createMethods({ apig, apiId, endpoints })
+
+    endpoints[0].function = lambdaOutputs.arn
+
+    this.state.endpoints = endpoints
     await this.save()
 
-    return {}
+    const res = await createIntegrations({ apig, lambda, apiId, endpoints })
+
+    // console.log(res)
   }
+
+  // async remove(inputs = {}) {
+  //   const { id } = this.state
+  //
+  //   if (!id) {
+  //     return
+  //   }
+  //
+  //   const config = mergeDeepRight(defaults, inputs)
+  //
+  //   const awsIamRole = await this.load('@serverless/aws-iam-role')
+  //
+  //   // there's no need to pass names as input
+  //   // since it's saved in the child component state
+  //   await awsIamRole.remove()
+  //
+  //   const apig = new AWS.APIGateway({
+  //     region: config.region,
+  //     credentials: this.context.credentials.aws
+  //   })
+  //
+  //   this.cli.status('Removing')
+  //   await deleteApi({ apig, id })
+  //
+  //   this.state = {}
+  //   await this.save()
+  //
+  //   return {}
+  // }
 }
 
 module.exports = AwsApiGateway
