@@ -120,6 +120,7 @@ function getCorsOptionsConfig() {
 
 function getSwaggerDefinition(name, roleArn, routes, region) {
   let paths = {}
+  let requireApiKey = false
 
   // TODO: udpate code to be functional
   forEachObjIndexed((methods, path) => {
@@ -141,6 +142,14 @@ function getSwaggerDefinition(name, roleArn, routes, region) {
         isCorsEnabled = false
       }
 
+      let requireApiKeyOnMethod
+      if (methodObject['api-key']) {
+        requireApiKey = true
+        requireApiKeyOnMethod = true
+      } else {
+        requireApiKeyOnMethod = false
+      }
+
       const apiGatewayIntegration = getApiGatewayIntegration(roleArn, uri, isCorsEnabled)
       const defaultResponses = getDefaultResponses(isCorsEnabled)
       updatedMethods = set(lensPath([normalizedMethod]), apiGatewayIntegration, updatedMethods)
@@ -149,6 +158,19 @@ function getSwaggerDefinition(name, roleArn, routes, region) {
         defaultResponses,
         updatedMethods
       )
+
+      if (requireApiKeyOnMethod) {
+        const security = [
+          {
+            "api_key": []
+          }
+        ]
+        updatedMethods = set(
+          lensPath([normalizedMethod, 'security']),
+          security,
+          updatedMethods
+        )
+      }
     }, methods)
 
     if (enableCorsOnPath) {
@@ -171,6 +193,17 @@ function getSwaggerDefinition(name, roleArn, routes, region) {
     produces: ['application/json'],
     paths
   }
+
+  if (requireApiKey) {
+    definition.securityDefinitions = {
+      api_key: {
+        type: "apiKey",
+        name: "x-api-key",
+        in: "header"
+      }
+    }
+  }
+
   return definition
 }
 
