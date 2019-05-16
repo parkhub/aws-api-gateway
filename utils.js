@@ -227,6 +227,51 @@ function configChanged(prevConfig, newConfig) {
   )
 }
 
+async function createApiKeyAndUsagePlan({ apig, name, stage, restApiId }) {
+  const apiKey = await apig.createApiKey({
+    name: `${name}-api-key`,
+    enabled: true
+  }).promise()
+
+  const usagePlan = await apig.createUsagePlan({
+    name: `${name}-usage-plan`,
+    apiStages: [
+      {
+        apiId: restApiId,
+        stage
+      }
+    ]
+  }).promise()
+
+  await apig.createUsagePlanKey({
+    keyId: apiKey.id,
+    keyType: 'API_KEY',
+    usagePlanId: usagePlan.id
+  }).promise()
+}
+
+async function removeApiKeyAndUsagePlan({ apig, restApiId }) {
+  const plans = await apig.getUsagePlans().promise()
+  await Promise.all(plans.items.map(async plan => {
+    if (plan.apiStages[0].apiId === restApiId) {
+      const planKeys = await apig.getUsagePlanKeys({ usagePlanId: plan.id }).promise()
+      await Promise.all(planKeys.items.map(async planKey => {
+        await apig.deleteUsagePlanKey({ keyId: planKey.id, usagePlanId: plan.id })
+      }))
+      await apig.updateUsagePlan({
+        usagePlanId: plan.id,
+        patchOperations: [
+          {
+            op: 'remove',
+            path: '/apiStages'
+          }
+        ]
+      }).promise()
+      await apig.deleteUsagePlan({ usagePlanId: plan.id }).promise()
+    }
+  }))
+}
+
 // "public" functions
 async function createRoutesApi({ apig, name, role, routes, stage, region }) {
   const swagger = getSwaggerDefinition(name, role.arn, routes, region)
@@ -247,6 +292,10 @@ async function createRoutesApi({ apig, name, role, routes, stage, region }) {
 
   const url = generateUrl(res.id, stage, region)
   const urls = generateUrls(routes, res.id, stage, region)
+
+  if (swagger.securityDefinitions) {
+    await createApiKeyAndUsagePlan({ apig, name, stage, restApiId: res.id })
+  }
 
   const outputs = {
     name,
@@ -320,6 +369,8 @@ async function createTemplateApi({ apig, template, stage, region }) {
 async function deleteApi({ apig, id }) {
   let res = false
   try {
+    await removeApiKeyAndUsagePlan({ apig, restApiId: id })
+
     res = await apig
       .deleteRestApi({
         restApiId: id
