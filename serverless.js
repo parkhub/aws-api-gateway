@@ -64,7 +64,7 @@ class AwsApiGateway extends Component {
   }
 
   async remove(inputs = {}) {
-    const { id } = this.state
+    const { id, apiKeyId, usagePlanId, usagePlanKeyId } = this.state
 
     if (!id) {
       return
@@ -84,7 +84,7 @@ class AwsApiGateway extends Component {
     })
 
     this.cli.status('Removing')
-    await deleteApi({ apig, id })
+    await deleteApi({ apig, id, apiKeyId, usagePlanId, usagePlanKeyId })
 
     this.state = {}
     await this.save()
