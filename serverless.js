@@ -13,7 +13,7 @@ const {
   removeApi,
   removeMethods,
   removeResources
-} = require('./next')
+} = require('./utils')
 
 const defaults = {
   region: 'us-east-1',

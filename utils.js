@@ -1,410 +1,379 @@
-const { equals, forEachObjIndexed, keys, map, set, lensPath } = require('ramda')
+const { mergeDeepRight } = require('ramda')
 
-// "private" functions
-function getNormalizedPath(path) {
-  return `/${path.replace(/^\/+/, '')}`
-}
-
-function getNormalizedMethod(method) {
-  return method.toLowerCase()
-}
-
-function getDefaultResponses(useCors) {
-  const defaultResponses = {
-    200: {
-      description: 'Success'
-    }
+const apiExists = async ({ apig, apiId }) => {
+  if (!apiId) {
+    return false
   }
 
-  if (useCors) {
-    let defaultResponsesWithCors = { ...defaultResponses }
-    defaultResponsesWithCors = set(
-      lensPath([200]),
-      {
-        headers: {
-          'Access-Control-Allow-Headers': {
-            type: 'string'
-          },
-          'Access-Control-Allow-Methods': {
-            type: 'string'
-          },
-          'Access-Control-Allow-Origin': {
-            type: 'string'
-          }
-        }
-      },
-      defaultResponsesWithCors
-    )
-    return defaultResponsesWithCors
-  }
-  return defaultResponses
-}
-
-function getApiGatewayIntegration(roleArn, uri, useCors) {
-  const apiGatewayIntegration = {
-    'x-amazon-apigateway-integration': {
-      type: 'aws_proxy',
-      httpMethod: 'POST',
-      credentials: roleArn,
-      uri,
-      responses: {
-        default: {
-          statusCode: '200'
-        }
-      }
-    }
-  }
-
-  if (useCors) {
-    let apiGatewayIntegrationWithCors = { ...apiGatewayIntegration }
-    apiGatewayIntegrationWithCors = set(
-      lensPath(['x-amazon-apigateway-integration', 'responses', 'default', 'responseParameters']),
-      {
-        'method.response.header.Access-Control-Allow-Headers':
-          "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'",
-        'method.response.header.Access-Control-Allow-Methods': "'*'",
-        'method.response.header.Access-Control-Allow-Origin': "'*'"
-      },
-      apiGatewayIntegrationWithCors
-    )
-    return apiGatewayIntegrationWithCors
-  }
-  return apiGatewayIntegration
-}
-
-function getCorsOptionsConfig() {
-  return {
-    summary: 'CORS support',
-    description: 'Enable CORS by returning correct headers',
-    consumes: ['application/json'],
-    produces: ['application/json'],
-    tags: ['CORS'],
-    'x-amazon-apigateway-integration': {
-      type: 'mock',
-      requestTemplates: {
-        'application/json': '{ "statusCode": 200 }'
-      },
-      responses: {
-        default: {
-          statusCode: '200',
-          responseParameters: {
-            'method.response.header.Access-Control-Allow-Headers':
-              "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'",
-            'method.response.header.Access-Control-Allow-Methods': "'*'",
-            'method.response.header.Access-Control-Allow-Origin': "'*'"
-          },
-          responseTemplates: {
-            'application/json': '{}'
-          }
-        }
-      }
-    },
-    responses: {
-      200: {
-        description: 'Default response for CORS method',
-        headers: {
-          'Access-Control-Allow-Headers': {
-            type: 'string'
-          },
-          'Access-Control-Allow-Methods': {
-            type: 'string'
-          },
-          'Access-Control-Allow-Origin': {
-            type: 'string'
-          }
-        }
-      }
-    }
-  }
-}
-
-function getSwaggerDefinition(name, roleArn, routes, region) {
-  let paths = {}
-  let requireApiKey = false
-
-  // TODO: udpate code to be functional
-  forEachObjIndexed((methods, path) => {
-    let updatedMethods = {}
-    const normalizedPath = getNormalizedPath(path)
-    let enableCorsOnPath = false
-
-    forEachObjIndexed((methodObject, method) => {
-      const normalizedMethod = getNormalizedMethod(method)
-      const uri = `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${
-        methodObject.function
-      }/invocations`
-
-      let isCorsEnabled
-      if (methodObject.cors) {
-        isCorsEnabled = true
-        enableCorsOnPath = true
-      } else {
-        isCorsEnabled = false
-      }
-
-      let requireApiKeyOnMethod
-      if (methodObject['api-key']) {
-        requireApiKey = true
-        requireApiKeyOnMethod = true
-      } else {
-        requireApiKeyOnMethod = false
-      }
-
-      const apiGatewayIntegration = getApiGatewayIntegration(roleArn, uri, isCorsEnabled)
-      const defaultResponses = getDefaultResponses(isCorsEnabled)
-      updatedMethods = set(lensPath([normalizedMethod]), apiGatewayIntegration, updatedMethods)
-      updatedMethods = set(
-        lensPath([normalizedMethod, 'responses']),
-        defaultResponses,
-        updatedMethods
-      )
-
-      if (requireApiKeyOnMethod) {
-        const security = [
-          {
-            "api_key": []
-          }
-        ]
-        updatedMethods = set(
-          lensPath([normalizedMethod, 'security']),
-          security,
-          updatedMethods
-        )
-      }
-    }, methods)
-
-    if (enableCorsOnPath) {
-      const corsOptionsMethod = getCorsOptionsConfig()
-      updatedMethods = set(lensPath(['options']), corsOptionsMethod, updatedMethods)
-    }
-
-    // set the paths
-    paths = set(lensPath([normalizedPath]), updatedMethods, paths)
-  }, routes)
-
-  const definition = {
-    swagger: '2.0',
-    info: {
-      title: name,
-      version: new Date().toISOString()
-    },
-    schemes: ['https'],
-    consumes: ['application/json'],
-    produces: ['application/json'],
-    paths
-  }
-
-  if (requireApiKey) {
-    definition.securityDefinitions = {
-      api_key: {
-        type: "apiKey",
-        name: "x-api-key",
-        in: "header"
-      }
-    }
-  }
-
-  return definition
-}
-
-function generateUrl(id, stage, region) {
-  return `https://${id}.execute-api.${region}.amazonaws.com/${stage}/`
-}
-
-function generateUrls(routes, restApiId, stage, region) {
-  const paths = keys(routes)
-  return map((path) => {
-    const baseUrl = generateUrl(restApiId, stage, region)
-    return `${baseUrl}${path.replace(/^\/+/, '')}`
-  }, paths)
-}
-
-function configChanged(prevConfig, newConfig) {
-  return (
-    newConfig.name !== prevConfig.name ||
-    newConfig.roleArn !== prevConfig.roleArn ||
-    !equals(newConfig.routes, prevConfig.routes)
-  )
-}
-
-async function createApiKeyAndUsagePlan({ apig, name, stage, restApiId }) {
-  const apiKey = await apig.createApiKey({
-    name: `${name}-api-key`,
-    enabled: true
-  }).promise()
-
-  const usagePlan = await apig.createUsagePlan({
-    name: `${name}-usage-plan`,
-    apiStages: [
-      {
-        apiId: restApiId,
-        stage
-      }
-    ]
-  }).promise()
-
-  const usagePlanKey = await apig.createUsagePlanKey({
-    keyId: apiKey.id,
-    keyType: 'API_KEY',
-    usagePlanId: usagePlan.id
-  }).promise()
-
-  return {
-    apiKeyId: apiKey.id,
-    usagePlanId: usagePlan.id,
-    usagePlanKeyId: usagePlanKey.id
-  }
-}
-
-async function removeApiKeyAndUsagePlan({ apig, restApiId, apiKeyId, usagePlanId, usagePlanKeyId }) {
-  await apig.deleteUsagePlanKey({ keyId: usagePlanKeyId, usagePlanId: usagePlanId }).promise()
-  await apig.updateUsagePlan({
-    usagePlanId: usagePlanId,
-    patchOperations: [
-      {
-        op: 'remove',
-        path: '/apiStages'
-      }
-    ]
-  }).promise()
-  await apig.deleteUsagePlan({ usagePlanId: usagePlanId }).promise()
-  await apig.deleteApiKey({ apiKey: apiKeyId }).promise()
-}
-
-// "public" functions
-async function createRoutesApi({ apig, name, role, routes, stage, region }) {
-  const swagger = getSwaggerDefinition(name, role.arn, routes, region)
-  const json = JSON.stringify(swagger)
-
-  const res = await apig
-    .importRestApi({
-      body: Buffer.from(json, 'utf8')
-    })
-    .promise()
-
-  await apig
-    .createDeployment({
-      restApiId: res.id,
-      stageName: stage
-    })
-    .promise()
-
-  const url = generateUrl(res.id, stage, region)
-  const urls = generateUrls(routes, res.id, stage, region)
-
-  let apiKeyIds
-  if (swagger.securityDefinitions) {
-    apiKeyIds = await createApiKeyAndUsagePlan({ apig, name, stage, restApiId: res.id })
-  }
-
-  const outputs = {
-    name,
-    role,
-    routes,
-    id: res.id,
-    url,
-    urls,
-    ...apiKeyIds
-  }
-  return outputs
-}
-
-async function updateRoutesApi({ apig, name, role, routes, id, stage, region }) {
-  const swagger = getSwaggerDefinition(name, role.arn, routes, region)
-  const json = JSON.stringify(swagger)
-
-  await apig
-    .putRestApi({
-      restApiId: id,
-      mode: 'overwrite',
-      body: Buffer.from(json, 'utf8')
-    })
-    .promise()
-
-  await apig
-    .createDeployment({
-      restApiId: id,
-      stageName: stage
-    })
-    .promise()
-
-  const url = generateUrl(id, stage, region)
-  const urls = generateUrls(routes, id, stage, region)
-
-  const outputs = {
-    name,
-    role,
-    routes,
-    id,
-    url,
-    urls
-  }
-  return outputs
-}
-
-async function createTemplateApi({ apig, template, stage, region }) {
-  const json = JSON.stringify(template)
-
-  const res = await apig
-    .importRestApi({
-      body: Buffer.from(json, 'utf8')
-    })
-    .promise()
-
-  await apig
-    .createDeployment({
-      restApiId: res.id,
-      stageName: stage
-    })
-    .promise()
-
-  const url = generateUrl(res.id, stage, region)
-
-  const outputs = {
-    id: res.id,
-    url
-  }
-  return outputs
-}
-
-async function deleteApi({ apig, id, apiKeyId, usagePlanId, usagePlanKeyId }) {
-  let res = false
   try {
-    await removeApiKeyAndUsagePlan({
-      apig,
-      restApiId: id,
-      apiKeyId,
-      usagePlanId,
-      usagePlanKeyId
-    })
-
-    res = await apig
-      .deleteRestApi({
-        restApiId: id
-      })
-      .promise()
-  } catch (error) {
-    if (error.code !== 'NotFoundException') {
-      throw error
+    await apig.getRestApi({ restApiId: apiId }).promise()
+    return true
+  } catch (e) {
+    if (e.code === 'NotFoundException') {
+      return false
     }
+    throw Error(e)
   }
-  return !!res
 }
 
-async function createApi({ apig, name }) {
-  const res = await apig
+const createApi = async ({ apig, name, description }) => {
+  const api = await apig
     .createRestApi({
-      name
+      name,
+      description
     })
     .promise()
 
-  return { id: res.id }
+  return api.id
+}
+
+const getPathId = async ({ apig, apiId, endpoint }) => {
+  // todo this called many times to stay up to date. Is it worth the latency?
+  const existingEndpoints = (await apig
+    .getResources({
+      restApiId: apiId
+    })
+    .promise()).items
+
+  if (!endpoint) {
+    const rootResourceId = existingEndpoints.find(
+      (existingEndpoint) => existingEndpoint.path === '/'
+    ).id
+    return rootResourceId
+  }
+
+  const endpointFound = existingEndpoints.find(
+    (existingEndpoint) => existingEndpoint.path === endpoint.path
+  )
+
+  return endpointFound ? endpointFound.id : null
+}
+
+const endpointExists = async ({ apig, apiId, endpoint }) => {
+  const resourceId = await getPathId({ apig, apiId, endpoint })
+
+  if (!resourceId) {
+    return false
+  }
+
+  const params = {
+    httpMethod: endpoint.method,
+    resourceId,
+    restApiId: apiId
+  }
+
+  try {
+    await apig.getMethod(params).promise()
+    return true
+  } catch (e) {
+    if (e.code === 'NotFoundException') {
+      return false
+    }
+  }
+}
+
+const myEndpoint = (state, endpoint) => {
+  if (
+    state.endpoints &&
+    state.endpoints.find((e) => e.method === endpoint.method && e.path === endpoint.path)
+  ) {
+    return true
+  }
+  return false
+}
+
+const validateEndpointObject = ({ endpoint, apiId, stage, region }) => {
+  const validMethods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'ANY']
+
+  if (typeof endpoint !== 'object') {
+    throw Error('endpoint must be an object')
+  }
+
+  if (!endpoint.method) {
+    throw Error(`missing method property for endpoint "${JSON.stringify(endpoint)}"`)
+  }
+
+  if (endpoint.path === '') {
+    throw Error(
+      `endpoint path cannot be an empty string for endpoint "${JSON.stringify(endpoint)}"`
+    )
+  }
+
+  if (!endpoint.path) {
+    throw Error(`missing path property for endpoint "${JSON.stringify(endpoint)}"`)
+  }
+
+  if (typeof endpoint.method !== 'string' || typeof endpoint.path !== 'string') {
+    throw Error(`invalid endpoint "${JSON.stringify(endpoint)}"`)
+  }
+
+  if (!validMethods.includes(endpoint.method.toUpperCase())) {
+    throw Error(`invalid method for endpoint "${JSON.stringify(endpoint)}"`)
+  }
+
+  if (endpoint.path !== '/') {
+    if (!endpoint.path.startsWith('/')) {
+      endpoint.path = `/${endpoint.path}`
+    }
+    if (endpoint.path.endsWith('/')) {
+      endpoint.path = endpoint.path.substring(0, endpoint.path.length - 1)
+    }
+  }
+
+  const validatedEndpoint = {
+    url: `https://${apiId}.execute-api.${region}.amazonaws.com/${stage}${endpoint.path}`,
+    path: endpoint.path,
+    method: endpoint.method.toUpperCase()
+  }
+
+  return mergeDeepRight(endpoint, validatedEndpoint)
+}
+
+const validateEndpoint = async ({ apig, apiId, endpoint, state, stage, region }) => {
+  const validatedEndpoint = validateEndpointObject({ endpoint, apiId, stage, region })
+
+  if (await endpointExists({ apig, apiId, endpoint: validatedEndpoint })) {
+    if (!myEndpoint(state, validatedEndpoint)) {
+      throw Error(
+        `endpoint ${validatedEndpoint.method} ${validatedEndpoint.path} already exists in provider`
+      )
+    }
+  }
+
+  return validatedEndpoint
+}
+
+const validateEndpoints = async ({ apig, apiId, endpoints, state, stage, region }) => {
+  const promises = []
+
+  for (const endpoint of endpoints) {
+    promises.push(validateEndpoint({ apig, apiId, endpoint, state, stage, region }))
+  }
+
+  return Promise.all(promises)
+}
+
+const createPath = async ({ apig, apiId, endpoint }) => {
+  const pathId = await getPathId({ apig, apiId, endpoint })
+
+  if (pathId) {
+    return pathId
+  }
+
+  const pathParts = endpoint.path.split('/')
+  const pathPart = pathParts.pop()
+  const parentEndpoint = { path: pathParts.join('/') }
+
+  let parentId
+  if (parentEndpoint.path === '') {
+    parentId = await getPathId({ apig, apiId })
+  } else {
+    parentId = await createPath({ apig, apiId, endpoint: parentEndpoint })
+  }
+
+  const params = {
+    pathPart,
+    parentId,
+    restApiId: apiId
+  }
+
+  const createdPath = await apig.createResource(params).promise()
+
+  return createdPath.id
+}
+
+const createPaths = async ({ apig, apiId, endpoints }) => {
+  const createdEndpoints = []
+
+  for (const endpoint of endpoints) {
+    endpoint.id = await createPath({ apig, apiId, endpoint })
+    createdEndpoints.push(endpoint)
+  }
+
+  return createdEndpoints
+}
+
+const createMethod = async ({ apig, apiId, endpoint }) => {
+  const params = {
+    authorizationType: 'NONE',
+    httpMethod: endpoint.method,
+    resourceId: endpoint.id,
+    restApiId: apiId,
+    apiKeyRequired: false
+  }
+
+  try {
+    await apig.putMethod(params).promise()
+  } catch (e) {
+    if (e.code !== 'ConflictException') {
+      throw Error(e)
+    }
+  }
+}
+
+const createMethods = async ({ apig, apiId, endpoints }) => {
+  const promises = []
+
+  for (const endpoint of endpoints) {
+    promises.push(createMethod({ apig, apiId, endpoint }))
+  }
+
+  await Promise.all(promises)
+
+  return endpoints
+}
+
+const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
+  const functionName = endpoint.function.split(':')[6]
+  const accountId = endpoint.function.split(':')[4]
+  const region = endpoint.function.split(':')[3] // todo what if the lambda in another region?
+
+  const integrationParams = {
+    httpMethod: endpoint.method,
+    resourceId: endpoint.id,
+    restApiId: apiId,
+    type: 'AWS_PROXY',
+    integrationHttpMethod: 'POST',
+    uri: `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${
+      endpoint.function
+    }/invocations`
+  }
+
+  const res = await apig.putIntegration(integrationParams).promise()
+
+  const permissionsParams = {
+    Action: 'lambda:InvokeFunction',
+    FunctionName: functionName,
+    Principal: 'apigateway.amazonaws.com',
+    SourceArn: `arn:aws:execute-api:${region}:${accountId}:${apiId}/*/*`,
+    StatementId: `${functionName}-http-${Math.random()
+      .toString(36)
+      .substring(7)}`
+  }
+
+  await lambda.addPermission(permissionsParams).promise()
+
+  return res
+}
+
+const createIntegrations = async ({ apig, lambda, apiId, endpoints }) => {
+  const promises = []
+
+  for (const endpoint of endpoints) {
+    promises.push(createIntegration({ apig, lambda, apiId, endpoint }))
+  }
+
+  await Promise.all(promises)
+
+  return endpoints
+}
+
+const createDeployment = async ({ apig, apiId, stage }) => {
+  const deployment = await apig.createDeployment({ restApiId: apiId, stageName: stage }).promise()
+
+  // todo add update stage functionality
+
+  return deployment.id
+}
+
+const removeMethod = async ({ apig, apiId, endpoint }) => {
+  const params = {
+    restApiId: apiId,
+    resourceId: endpoint.id,
+    httpMethod: endpoint.method
+  }
+
+  try {
+    await apig.deleteMethod(params).promise()
+  } catch (e) {
+    if (e.code !== 'NotFoundException') {
+      throw Error(e)
+    }
+  }
+
+  return {}
+}
+
+const removeMethods = async ({ apig, apiId, endpoints }) => {
+  const promises = []
+
+  for (const endpoint of endpoints) {
+    promises.push(removeMethod({ apig, apiId, endpoint }))
+  }
+
+  return Promise.all(promises)
+}
+
+const removeResource = async ({ apig, apiId, endpoint }) => {
+  try {
+    await apig.deleteResource({ restApiId: apiId, resourceId: endpoint.id }).promise()
+  } catch (e) {
+    if (e.code !== 'NotFoundException') {
+      throw Error(e)
+    }
+  }
+  return {}
+}
+
+const removeResources = async ({ apig, apiId, endpoints }) => {
+  const params = {
+    restApiId: apiId
+  }
+
+  const resources = await apig.getResources(params).promise()
+
+  const promises = []
+
+  for (const endpoint of endpoints) {
+    const resource = resources.items.find((resourceItem) => resourceItem.id === endpoint.id)
+
+    const childResources = resources.items.filter(
+      (resourceItem) => resourceItem.parentId === endpoint.id
+    )
+
+    const resourceMethods = resource ? Object.keys(resource.resourceMethods || {}) : []
+
+    // only remove resources if they don't have methods nor child resources
+    // to make sure we don't disrupt other services using the same api
+    if (resource && resourceMethods.length === 0 && childResources.length === 0) {
+      promises.push(removeResource({ apig, apiId, endpoint }))
+    }
+  }
+
+  if (promises.length === 0) {
+    return []
+  }
+
+  await Promise.all(promises)
+
+  return removeResources({ apig, apiId, endpoints })
+}
+
+const removeApi = async ({ apig, apiId }) => {
+  try {
+    await apig.deleteRestApi({ restApiId: apiId }).promise()
+  } catch (e) {}
 }
 
 module.exports = {
-  configChanged,
+  validateEndpointObject,
+  validateEndpoint,
+  validateEndpoints,
+  endpointExists,
+  myEndpoint,
+  apiExists,
   createApi,
-  createRoutesApi,
-  updateRoutesApi,
-  deleteApi
+  getPathId,
+  createPath,
+  createPaths,
+  createMethod,
+  createMethods,
+  createIntegration,
+  createIntegrations,
+  createDeployment,
+  removeMethod,
+  removeMethods,
+  removeResource,
+  removeResources,
+  removeApi
 }
