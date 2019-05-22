@@ -1,33 +1,4 @@
-const AWS = require('aws-sdk')
 const { mergeDeepRight } = require('ramda')
-
-const parseEndpoint = (endpoint) => {
-  endpoint = endpoint.trim()
-  const validMethods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'ANY']
-  const method = endpoint.split(' ')[0].toUpperCase()
-  let path = endpoint.split(' ')[1]
-
-  if (!endpoint || !validMethods.includes(method) || !path || path === '') {
-    throw Error(`invalid endpoint "${endpoint}"`)
-  }
-
-  if (path !== '/') {
-    if (!path.startsWith('/')) {
-      path = `/${path}`
-    }
-    if (path.endsWith('/')) {
-      path = path.substring(0, path.length - 1)
-    }
-  }
-
-  return {
-    raw: `${method} ${path}`,
-    path,
-    method
-  }
-}
-
-const parseEndpoints = (endpoints) => endpoints.map((endpoint) => parseEndpoint(endpoint))
 
 const apiExists = async ({ apig, apiId }) => {
   if (!apiId) {
@@ -57,6 +28,7 @@ const createApi = async ({ apig, name, description }) => {
 }
 
 const getPathId = async ({ apig, apiId, endpoint }) => {
+  // todo this called many times to stay up to date. Is it worth the latency?
   const existingEndpoints = (await apig
     .getResources({
       restApiId: apiId
@@ -100,7 +72,17 @@ const endpointExists = async ({ apig, apiId, endpoint }) => {
   }
 }
 
-const validateEndpointObject = (endpoint) => {
+const myEndpoint = (state, endpoint) => {
+  if (
+    state.endpoints &&
+    state.endpoints.find((e) => e.method === endpoint.method && e.path === endpoint.path)
+  ) {
+    return true
+  }
+  return false
+}
+
+const validateEndpointObject = ({ endpoint, apiId, stage, region }) => {
   const validMethods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'ANY']
 
   if (typeof endpoint !== 'object') {
@@ -139,7 +121,7 @@ const validateEndpointObject = (endpoint) => {
   }
 
   const validatedEndpoint = {
-    raw: `${endpoint.method.toUpperCase()} ${endpoint.path}`,
+    url: `https://${apiId}.execute-api.${region}.amazonaws.com/${stage}${endpoint.path}`,
     path: endpoint.path,
     method: endpoint.method.toUpperCase()
   }
@@ -147,23 +129,25 @@ const validateEndpointObject = (endpoint) => {
   return mergeDeepRight(endpoint, validatedEndpoint)
 }
 
-const validateEndpoint = async ({ apig, apiId, endpoint, state }) => {
-  const validatedEndpoint = validateEndpointObject(endpoint)
+const validateEndpoint = async ({ apig, apiId, endpoint, state, stage, region }) => {
+  const validatedEndpoint = validateEndpointObject({ endpoint, apiId, stage, region })
 
   if (await endpointExists({ apig, apiId, endpoint: validatedEndpoint })) {
-    if (!state.endpoints || !state.endpoints.find((e) => e.raw === validatedEndpoint.raw)) {
-      throw Error(`endpoint ${validatedEndpoint.raw} already exists in provider`)
+    if (!myEndpoint(state, validatedEndpoint)) {
+      throw Error(
+        `endpoint ${validatedEndpoint.method} ${validatedEndpoint.path} already exists in provider`
+      )
     }
   }
 
   return validatedEndpoint
 }
 
-const validateEndpoints = async ({ apig, apiId, endpoints, state }) => {
+const validateEndpoints = async ({ apig, apiId, endpoints, state, stage, region }) => {
   const promises = []
 
   for (const endpoint of endpoints) {
-    promises.push(validateEndpoint({ apig, apiId, endpoint, state }))
+    promises.push(validateEndpoint({ apig, apiId, endpoint, state, stage, region }))
   }
 
   return Promise.all(promises)
@@ -262,16 +246,12 @@ const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
     FunctionName: functionName,
     Principal: 'apigateway.amazonaws.com',
     SourceArn: `arn:aws:execute-api:${region}:${accountId}:${apiId}/*/*`,
-    StatementId: `${functionName}-http`
+    StatementId: `${functionName}-http-${Math.random()
+      .toString(36)
+      .substring(7)}`
   }
 
-  try {
-    await lambda.addPermission(permissionsParams).promise()
-  } catch (e) {
-    if (e.code !== 'ResourceConflictException') {
-      throw e
-    }
-  }
+  await lambda.addPermission(permissionsParams).promise()
 
   return res
 }
@@ -289,60 +269,98 @@ const createIntegrations = async ({ apig, lambda, apiId, endpoints }) => {
 }
 
 const createDeployment = async ({ apig, apiId, stage }) => {
-  const deployment = await apig.createDeployment({ restApiId: apiId }).promise()
-
-  const stageParams = {
-    deploymentId: deployment.id,
-    restApiId: apiId,
-    stageName: stage
-  }
+  const deployment = await apig.createDeployment({ restApiId: apiId, stageName: stage }).promise()
 
   // todo add update stage functionality
-  try {
-    await apig.createStage(stageParams).promise()
-  } catch (e) {
-    if (e.code !== 'ConflictException') {
-      throw Error(e)
-    }
-  }
 
   return deployment.id
 }
 
-// const run = async () => {
-//   const apig = new AWS.APIGateway()
-//   const apiId = 'hh9s891g8d'
-//
-//   const endpoint = {
-//     path: 'users/',
-//     method: 'any'
-//   }
-//
-//   const endpoints = [
-//     {
-//       path: 'posts/any',
-//       method: 'get',
-//       function: 'abc'
-//     },
-//     {
-//       path: 'posts/',
-//       method: 'post',
-//       function: 'abc'
-//     }
-//   ]
-//
-//   const validatedEndpoint = await validateEndpoints({ apig, apiId, endpoints, state: {} })
-//
-//   console.log(validatedEndpoint)
-// }
-//
-// run()
+const removeMethod = async ({ apig, apiId, endpoint }) => {
+  const params = {
+    restApiId: apiId,
+    resourceId: endpoint.id,
+    httpMethod: endpoint.method
+  }
+
+  try {
+    await apig.deleteMethod(params).promise()
+  } catch (e) {
+    if (e.code !== 'NotFoundException') {
+      throw Error(e)
+    }
+  }
+
+  return {}
+}
+
+const removeMethods = async ({ apig, apiId, endpoints }) => {
+  const promises = []
+
+  for (const endpoint of endpoints) {
+    promises.push(removeMethod({ apig, apiId, endpoint }))
+  }
+
+  return Promise.all(promises)
+}
+
+const removeResource = async ({ apig, apiId, endpoint }) => {
+  try {
+    await apig.deleteResource({ restApiId: apiId, resourceId: endpoint.id }).promise()
+  } catch (e) {
+    if (e.code !== 'NotFoundException') {
+      throw Error(e)
+    }
+  }
+  return {}
+}
+
+const removeResources = async ({ apig, apiId, endpoints }) => {
+  const params = {
+    restApiId: apiId
+  }
+
+  const resources = await apig.getResources(params).promise()
+
+  const promises = []
+
+  for (const endpoint of endpoints) {
+    const resource = resources.items.find((resourceItem) => resourceItem.id === endpoint.id)
+
+    const childResources = resources.items.filter(
+      (resourceItem) => resourceItem.parentId === endpoint.id
+    )
+
+    const resourceMethods = resource ? Object.keys(resource.resourceMethods || {}) : []
+
+    // only remove resources if they don't have methods nor child resources
+    // to make sure we don't disrupt other services using the same api
+    if (resource && resourceMethods.length === 0 && childResources.length === 0) {
+      promises.push(removeResource({ apig, apiId, endpoint }))
+    }
+  }
+
+  if (promises.length === 0) {
+    return []
+  }
+
+  await Promise.all(promises)
+
+  return removeResources({ apig, apiId, endpoints })
+}
+
+const removeApi = async ({ apig, apiId }) => {
+  try {
+    await apig.deleteRestApi({ restApiId: apiId }).promise()
+  } catch (e) {}
+}
 
 module.exports = {
   validateEndpointObject,
   validateEndpoint,
   validateEndpoints,
   endpointExists,
+  myEndpoint,
   apiExists,
   createApi,
   getPathId,
@@ -352,5 +370,10 @@ module.exports = {
   createMethods,
   createIntegration,
   createIntegrations,
-  createDeployment
+  createDeployment,
+  removeMethod,
+  removeMethods,
+  removeResource,
+  removeResources,
+  removeApi
 }
