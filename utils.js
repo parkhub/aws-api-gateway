@@ -120,6 +120,7 @@ function getCorsOptionsConfig() {
 
 function getSwaggerDefinition(name, roleArn, routes, region) {
   let paths = {}
+  let requireApiKey = false
 
   // TODO: udpate code to be functional
   forEachObjIndexed((methods, path) => {
@@ -141,6 +142,14 @@ function getSwaggerDefinition(name, roleArn, routes, region) {
         isCorsEnabled = false
       }
 
+      let requireApiKeyOnMethod
+      if (methodObject['api-key']) {
+        requireApiKey = true
+        requireApiKeyOnMethod = true
+      } else {
+        requireApiKeyOnMethod = false
+      }
+
       const apiGatewayIntegration = getApiGatewayIntegration(roleArn, uri, isCorsEnabled)
       const defaultResponses = getDefaultResponses(isCorsEnabled)
       updatedMethods = set(lensPath([normalizedMethod]), apiGatewayIntegration, updatedMethods)
@@ -149,6 +158,19 @@ function getSwaggerDefinition(name, roleArn, routes, region) {
         defaultResponses,
         updatedMethods
       )
+
+      if (requireApiKeyOnMethod) {
+        const security = [
+          {
+            "api_key": []
+          }
+        ]
+        updatedMethods = set(
+          lensPath([normalizedMethod, 'security']),
+          security,
+          updatedMethods
+        )
+      }
     }, methods)
 
     if (enableCorsOnPath) {
@@ -171,6 +193,17 @@ function getSwaggerDefinition(name, roleArn, routes, region) {
     produces: ['application/json'],
     paths
   }
+
+  if (requireApiKey) {
+    definition.securityDefinitions = {
+      api_key: {
+        type: "apiKey",
+        name: "x-api-key",
+        in: "header"
+      }
+    }
+  }
+
   return definition
 }
 
@@ -194,6 +227,50 @@ function configChanged(prevConfig, newConfig) {
   )
 }
 
+async function createApiKeyAndUsagePlan({ apig, name, stage, restApiId }) {
+  const apiKey = await apig.createApiKey({
+    name: `${name}-api-key`,
+    enabled: true
+  }).promise()
+
+  const usagePlan = await apig.createUsagePlan({
+    name: `${name}-usage-plan`,
+    apiStages: [
+      {
+        apiId: restApiId,
+        stage
+      }
+    ]
+  }).promise()
+
+  const usagePlanKey = await apig.createUsagePlanKey({
+    keyId: apiKey.id,
+    keyType: 'API_KEY',
+    usagePlanId: usagePlan.id
+  }).promise()
+
+  return {
+    apiKeyId: apiKey.id,
+    usagePlanId: usagePlan.id,
+    usagePlanKeyId: usagePlanKey.id
+  }
+}
+
+async function removeApiKeyAndUsagePlan({ apig, restApiId, apiKeyId, usagePlanId, usagePlanKeyId }) {
+  await apig.deleteUsagePlanKey({ keyId: usagePlanKeyId, usagePlanId: usagePlanId }).promise()
+  await apig.updateUsagePlan({
+    usagePlanId: usagePlanId,
+    patchOperations: [
+      {
+        op: 'remove',
+        path: '/apiStages'
+      }
+    ]
+  }).promise()
+  await apig.deleteUsagePlan({ usagePlanId: usagePlanId }).promise()
+  await apig.deleteApiKey({ apiKey: apiKeyId }).promise()
+}
+
 // "public" functions
 async function createRoutesApi({ apig, name, role, routes, stage, region }) {
   const swagger = getSwaggerDefinition(name, role.arn, routes, region)
@@ -215,13 +292,19 @@ async function createRoutesApi({ apig, name, role, routes, stage, region }) {
   const url = generateUrl(res.id, stage, region)
   const urls = generateUrls(routes, res.id, stage, region)
 
+  let apiKeyIds
+  if (swagger.securityDefinitions) {
+    apiKeyIds = await createApiKeyAndUsagePlan({ apig, name, stage, restApiId: res.id })
+  }
+
   const outputs = {
     name,
     role,
     routes,
     id: res.id,
     url,
-    urls
+    urls,
+    ...apiKeyIds
   }
   return outputs
 }
@@ -284,9 +367,17 @@ async function createTemplateApi({ apig, template, stage, region }) {
   return outputs
 }
 
-async function deleteApi({ apig, id }) {
+async function deleteApi({ apig, id, apiKeyId, usagePlanId, usagePlanKeyId }) {
   let res = false
   try {
+    await removeApiKeyAndUsagePlan({
+      apig,
+      restApiId: id,
+      apiKeyId,
+      usagePlanId,
+      usagePlanKeyId
+    })
+
     res = await apig
       .deleteRestApi({
         restApiId: id
