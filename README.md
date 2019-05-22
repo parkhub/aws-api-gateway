@@ -111,7 +111,7 @@ getUsers:
 restApi:
   component: "@serverless/aws-api-gateway"
   inputs:
-    id: qwertyuiop # specify the restApiId to extend
+    id: qwertyuiop # specify the REST API ID you'd like to extend
     endpoints:
       - path: /users
         method: POST
