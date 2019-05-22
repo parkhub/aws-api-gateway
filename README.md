@@ -5,7 +5,7 @@ The complete AWS API Gateway Framework, powered by [Serverless Components](https
 ## Features
 
 - Create & manage new API Gateway REST APIs with very simple configuration.
-- Extend & manage Existing API Gateway REST APIs without disrupting other services.
+- Extend Existing API Gateway REST APIs without disrupting other services.
 - Supports AWS Lambda proxy integration
 - Supports AWS Lambda Authorizers (coming soon)
 - Supports proxy endpoints (coming soon)
