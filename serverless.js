@@ -1,90 +1,94 @@
 const AWS = require('aws-sdk')
 const { mergeDeepRight } = require('ramda')
 const { Component } = require('@serverless/components')
-const { configChanged, createRoutesApi, updateRoutesApi, deleteApi, createApi } = require('./utils')
+
+const {
+  apiExists,
+  createApi,
+  validateEndpoints,
+  createPaths,
+  createMethods,
+  createIntegrations,
+  createDeployment,
+  removeApi,
+  removeMethods,
+  removeResources
+} = require('./utils')
 
 const defaults = {
-  name: 'serverless',
-  region: 'us-east-1'
+  region: 'us-east-1',
+  name: 'serverless-components-api',
+  description: 'Serverless Components API'
 }
 
 class AwsApiGateway extends Component {
   async default(inputs = {}) {
+    this.cli.status('Deploying')
     const config = mergeDeepRight(defaults, inputs)
+    const { name, description, region } = config
+    const { stage } = this.context
+
+    // todo quick fix for array of objects in yaml issue
+    config.endpoints = Object.keys(config.endpoints).map((e) => config.endpoints[e])
+
     const apig = new AWS.APIGateway({
+      region,
+      credentials: this.context.credentials.aws
+    })
+
+    const lambda = new AWS.Lambda({
       region: config.region,
       credentials: this.context.credentials.aws
     })
 
-    const { name, template, routes, region } = config
-    let outputs
-
-    if (template) {
-    } else if (routes) {
-      const awsIamRole = await this.load('@serverless/aws-iam-role')
-      config.role =
-        config.role || (await awsIamRole({ ...config, service: 'apigateway.amazonaws.com' }))
-
-      if (!configChanged(this.state, config)) {
-        outputs = this.state
-      } else if (inputs.name && !this.state.name) {
-        this.cli.status('Creating')
-        outputs = await createRoutesApi({
-          apig,
-          name,
-          role: config.role,
-          routes,
-          stage: this.context.stage,
-          region
-        })
-      } else {
-        this.cli.status('Updating')
-        outputs = await updateRoutesApi({
-          apig,
-          name,
-          role: config.role,
-          routes,
-          id: this.state.id,
-          stage: this.context.stage,
-          region
-        })
-      }
-    } else {
-      // create simple API
-      if (!this.state.id) {
-        outputs = await createApi({ apig, name })
-      }
+    let apiId = this.state.id || config.id
+    if (!(await apiExists({ apig, apiId }))) {
+      apiId = await createApi({ apig, name, description })
+      this.state.id = apiId
+      await this.save()
     }
 
-    this.state = outputs
+    let endpoints = await validateEndpoints({
+      apig,
+      apiId,
+      endpoints: config.endpoints,
+      state: this.state,
+      stage,
+      region
+    })
+
+    endpoints = await createPaths({ apig, apiId, endpoints })
+    endpoints = await createMethods({ apig, apiId, endpoints })
+
+    this.state.endpoints = endpoints
     await this.save()
 
+    endpoints = await createIntegrations({ apig, lambda, apiId, endpoints })
+
+    await createDeployment({ apig, apiId, stage })
+
+    const outputs = { id: apiId, endpoints }
+
     this.cli.outputs(outputs)
+
     return outputs
   }
 
   async remove(inputs = {}) {
-    const { id, apiKeyId, usagePlanId, usagePlanKeyId } = this.state
-
-    if (!id) {
-      return
-    }
-
+    this.cli.status('Removing')
     const config = mergeDeepRight(defaults, inputs)
-
-    const awsIamRole = await this.load('@serverless/aws-iam-role')
-
-    // there's no need to pass names as input
-    // since it's saved in the child component state
-    await awsIamRole.remove()
 
     const apig = new AWS.APIGateway({
       region: config.region,
       credentials: this.context.credentials.aws
     })
 
-    this.cli.status('Removing')
-    await deleteApi({ apig, id, apiKeyId, usagePlanId, usagePlanKeyId })
+    if (this.state.id) {
+      await removeApi({ apig, apiId: this.state.id })
+    } else if (inputs.id && this.state.endpoints && this.state.endpoints.length !== undefined) {
+      await removeMethods({ apig, apiId: inputs.id, endpoints: this.state.endpoints })
+      await removeResources({ apig, apiId: inputs.id, endpoints: this.state.endpoints })
+    }
 
     this.state = {}
     await this.save()

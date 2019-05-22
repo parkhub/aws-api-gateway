@@ -1,6 +1,20 @@
 # aws-api-gateway
 
-Instantly deploy REST APIs on AWS API Gateway with very simple configuration using [Serverless Components](https://github.com/serverless/components).
+The complete AWS API Gateway Framework, powered by [Serverless Components](https://github.com/serverless/components).
+
+## Features
+
+- Create & manage new API Gateway REST APIs with very simple configuration.
+- Extend & manage Existing API Gateway REST APIs without disrupting other services.
+- Supports AWS Lambda proxy integration
+- Supports AWS Lambda Authorizers (coming soon)
+- Supports proxy endpoints (coming soon)
+- Supports mock endpoints (coming soon)
+- Supports API Gateway Logs (coming soon)
+- Supports API Keys for new & existing REST APIs (coming soon)
+- Supports usage plans (coming soon)
+- Supports throttling & rate limits (coming soon)
+- Supports X-Ray Tracing (coming soon)
 
 &nbsp;
 
@@ -36,28 +50,75 @@ AWS_SECRET_ACCESS_KEY=XXX
 ```
 
 ### 3. Configure
+You can configure the component to either create a new REST API from scratch, or extend an existing one.
+
+#### Creating REST APIs
+You can create new REST APIs by specifying the endpoints you'd like to create, and optionally passing a name and description for your new REST API.
 
 ```yml
 # serverless.yml
 
-name: my-api
+name: rest-api
 
-myLambda:
+createUser:
   component: "@serverless/aws-lambda"
   inputs:
-    name: ${name}-lambda
+    name: ${name}-create-user
     code: ./code
-    handler: index.handler
+    handler: index.createUser
+getUsers:
+  component: "@serverless/aws-lambda"
+  inputs:
+    name: ${name}-get-users
+    code: ./code
+    handler: index.getUsers
 
-myApiGateway:
+restApi:
   component: "@serverless/aws-api-gateway"
   inputs:
-    name: ${name}-gateway
-    routes:
-      /foo:
-        get:
-          function: ${comp:myLambda.arn} # pass in the arn output property from the lambda component
-          cors: true
+    name: ${name}
+    description: Serverless REST API
+    endpoints:
+      - path: /users
+        method: POST
+        function: ${comp:createUser.arn}
+      - path: /users
+        method: GET
+        function: ${comp:getUsers.arn}
+```
+
+#### Extending REST APIs
+You can extend existing REST APIs by specifying the REST API ID. This will **only** create, remove & manage the specified endpoints without removing or disrupting other endpoints.
+
+```yml
+# serverless.yml
+
+name: rest-api
+
+createUser:
+  component: "@serverless/aws-lambda"
+  inputs:
+    name: ${name}-create-user
+    code: ./code
+    handler: index.createUser
+getUsers:
+  component: "@serverless/aws-lambda"
+  inputs:
+    name: ${name}-get-users
+    code: ./code
+    handler: index.getUsers
+
+restApi:
+  component: "@serverless/aws-api-gateway"
+  inputs:
+    id: qwertyuiop # specify the restApiId to extend
+    endpoints:
+      - path: /users
+        method: POST
+        function: ${comp:createUser.arn}
+      - path: /users
+        method: GET
+        function: ${comp:getUsers.arn}
 ```
 
 ### 4. Deploy
