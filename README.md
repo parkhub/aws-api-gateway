@@ -11,7 +11,7 @@ The complete AWS API Gateway Framework, powered by [Serverless Components](https
 - Supports proxy endpoints (coming soon)
 - Supports mock endpoints (coming soon)
 - Supports API Gateway Logs (coming soon)
-- Supports API Keys for new & existing REST APIs (coming soon)
+- Supports API Keys (coming soon)
 - Supports usage plans (coming soon)
 - Supports throttling & rate limits (coming soon)
 - Supports X-Ray Tracing (coming soon)
