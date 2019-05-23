@@ -16,15 +16,12 @@ The complete AWS API Gateway Framework, powered by [Serverless Components](https
 - Supports throttling & rate limits (coming soon)
 - Supports X-Ray Tracing (coming soon)
 
-&nbsp;
+## Table of Contents
 
 1. [Install](#1-install)
 2. [Create](#2-create)
 3. [Configure](#3-configure)
 4. [Deploy](#4-deploy)
-
-&nbsp;
-
 
 ### 1. Install
 
@@ -148,7 +145,7 @@ restApi:
 ### 4. Deploy
 
 ```shell
-api (master)$ ️components
+api (master)$ components
 
   myApig › outputs:
   id:  'e4asreichk'
