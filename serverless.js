@@ -1,5 +1,4 @@
 const AWS = require('aws-sdk')
-const { mergeDeepRight } = require('ramda')
 const { Component } = require('@serverless/components')
 
 const {
@@ -24,7 +23,7 @@ const defaults = {
 class AwsApiGateway extends Component {
   async default(inputs = {}) {
     this.cli.status('Deploying')
-    const config = mergeDeepRight(defaults, inputs)
+    const config = { ...defaults, ...inputs }
     const { name, description, region } = config
     const { stage } = this.context
 
@@ -42,10 +41,13 @@ class AwsApiGateway extends Component {
     })
 
     let apiId = this.state.id || config.id
-    if (!(await apiExists({ apig, apiId }))) {
+
+    if (!apiId) {
       apiId = await createApi({ apig, name, description })
       this.state.id = apiId
       await this.save()
+    } else if (!(await apiExists({ apig, apiId }))) {
+      throw Error(`the specified api id "${apiId}" does not exist`)
     }
 
     let endpoints = await validateEndpoints({
@@ -67,7 +69,11 @@ class AwsApiGateway extends Component {
 
     await createDeployment({ apig, apiId, stage })
 
-    const outputs = { id: apiId, endpoints }
+    const outputs = {
+      id: apiId,
+      endpoints,
+      url: `https://${apiId}.execute-api.${region}.amazonaws.com/${stage}/`
+    }
 
     this.cli.outputs(outputs)
 
@@ -76,7 +82,7 @@ class AwsApiGateway extends Component {
 
   async remove(inputs = {}) {
     this.cli.status('Removing')
-    const config = mergeDeepRight(defaults, inputs)
+    const config = { ...defaults, ...inputs }
 
     const apig = new AWS.APIGateway({
       region: config.region,

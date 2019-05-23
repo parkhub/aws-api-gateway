@@ -1,10 +1,4 @@
-const { mergeDeepRight } = require('ramda')
-
 const apiExists = async ({ apig, apiId }) => {
-  if (!apiId) {
-    return false
-  }
-
   try {
     await apig.getRestApi({ restApiId: apiId }).promise()
     return true
@@ -126,7 +120,7 @@ const validateEndpointObject = ({ endpoint, apiId, stage, region }) => {
     method: endpoint.method.toUpperCase()
   }
 
-  return mergeDeepRight(endpoint, validatedEndpoint)
+  return { ...endpoint, ...validatedEndpoint }
 }
 
 const validateEndpoint = async ({ apig, apiId, endpoint, state, stage, region }) => {

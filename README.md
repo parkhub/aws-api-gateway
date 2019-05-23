@@ -34,12 +34,34 @@ $ npm install -g @serverless/components
 
 ### 2. Create
 
-Just create a `serverless.yml` file
+Just create the following simple boilerplate:
 
 ```shell
 $ touch serverless.yml
+$ touch index.js
 $ touch .env      # your development AWS api keys
 $ touch .env.prod # your production AWS api keys
+```
+
+the `index.js` file should look something like this:
+
+
+```js
+
+module.exports.createUser = async (e) => {
+  return {
+    statusCode: 200,
+    body: 'Created User'
+  }
+}
+
+module.exports.getUsers = async (e) => {
+  return {
+    statusCode: 200,
+    body: 'Got Users'
+  }
+}
+
 ```
 
 the `.env` files are not required if you have the aws keys set globally and you want to use a single stage, but they should look like this.
@@ -48,6 +70,8 @@ the `.env` files are not required if you have the aws keys set globally and you 
 AWS_ACCESS_KEY_ID=XXX
 AWS_SECRET_ACCESS_KEY=XXX
 ```
+
+Keep reading for info on how to set up the `serverless.yml` file.
 
 ### 3. Configure
 You can configure the component to either create a new REST API from scratch, or extend an existing one.
@@ -124,46 +148,30 @@ restApi:
 ### 4. Deploy
 
 ```shell
-api (master)$ components
+api (master)$ ️components
 
-  myLambda › outputs:
-  name:  'my-api-lambda'
-  description:  'AWS Lambda Component'
-  memory:  512
-  timeout:  10
-  code:  './code'
-  bucket:  undefined
-  shims:  []
-  handler:  'index.handler'
-  runtime:  'nodejs8.10'
-  env: 
-  role: 
-    name:  'my-api-lambda'
-    arn:  'arn:aws:iam::552760238299:role/my-api-lambda'
-    service:  'lambda.amazonaws.com'
-    policy:  { arn: 'arn:aws:iam::aws:policy/AdministratorAccess' }
-  arn:  'arn:aws:lambda:us-east-1:552760238299:function:my-api-lambda'
-
-  myApiGateway › outputs:
-  name:  'my-api-gateway'
-  role: 
-    name:  'my-api-gateway'
-    arn:  'arn:aws:iam::552760238299:role/my-api-gateway'
-    service:  'apigateway.amazonaws.com'
-    policy:  { arn: 'arn:aws:iam::aws:policy/AdministratorAccess' }
-  routes: 
-    /foo:  { get:
-   { function:
-      'arn:aws:lambda:us-east-1:552760238299:function:my-api-lambda',
-     cors: true } }
-  id:  'z2itxmsoud'
-  url:  'https://z2itxssoud.execute-api.us-east-1.amazonaws.com/dev/'
-  urls:  [ 'https://z2itxssoud.execute-api.us-east-1.amazonaws.com/dev/foo' ]
+  myApig › outputs:
+  id:  'e4asreichk'
+  endpoints:  [ { path: '/users',
+    method: 'POST',
+    function:
+     'arn:aws:lambda:us-east-1:552750238291:function:rest-api-create-user',
+    url:
+     'https://e4asreichk.execute-api.us-east-1.amazonaws.com/dev/users',
+    id: 'jkgqlqjnf2' },
+  { path: '/users',
+    method: 'GET',
+    function:
+     'arn:aws:lambda:us-east-1:552750238291:function:rest-api-get-users',
+    url:
+     'https://e4asreichk.execute-api.us-east-1.amazonaws.com/dev/users',
+    id: 'h7zh3r' } ]
 
 
-  7s › dev › my-api › done
+  38s › dev › rest-api › done
 
 api (master)$
+
 ```
 
 &nbsp;
