@@ -34,10 +34,10 @@ $ npm install -g @serverless/components
 Just create the following simple boilerplate:
 
 ```shell
-$ touch serverless.yml
-$ touch index.js
-$ touch .env      # your development AWS api keys
-$ touch .env.prod # your production AWS api keys
+$ touch serverless.yml # more info in the "Configure" section below
+$ touch index.js       # your lambda code
+$ touch .env           # your development AWS api keys
+$ touch .env.prod      # your production AWS api keys
 ```
 
 the `index.js` file should look something like this:
