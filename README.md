@@ -7,7 +7,7 @@ The complete AWS API Gateway Framework, powered by [Serverless Components](https
 - Create & manage new API Gateway REST APIs with very simple configuration.
 - Extend Existing API Gateway REST APIs without disrupting other services.
 - Integrate with AWS Lambda via the [aws-lambda component](https://github.com/serverless-components/aws-lambda)
-- Authorize requests with AWS Lambda authorizers (coming soon)
+- Authorize requests with AWS Lambda authorizers
 - Create proxy endpoints for any URL with 3 lines of code (coming soon)
 - Create mock endpoints by specifying the object you'd like to return (coming soon)
 - Debug API Gateway requests Via CloudWatch Logs (coming soon)
@@ -59,6 +59,22 @@ module.exports.getUsers = async (e) => {
   }
 }
 
+module.exports.auth = async (event, context) => {
+  return {
+    principalId: 'user',
+    policyDocument: {
+      Version: '2012-10-17',
+      Statement: [
+        {
+          Action: 'execute-api:Invoke',
+          Effect: 'Allow',
+          Resource: event.methodArn
+        }
+      ]
+    }
+  }
+}
+
 ```
 
 the `.env` files are not required if you have the aws keys set globally and you want to use a single stage, but they should look like this.
@@ -93,6 +109,12 @@ getUsers:
     name: ${name}-get-users
     code: ./code
     handler: index.getUsers
+auth:
+  component: "@serverless/aws-lambda"
+  inputs:
+    name: ${name}-auth
+    code: ./code
+    handler: index.auth
 
 restApi:
   component: "@serverless/aws-api-gateway"
@@ -103,9 +125,11 @@ restApi:
       - path: /users
         method: POST
         function: ${comp:createUser.arn}
+        authorizer: ${comp:auth.arn}
       - path: /users
         method: GET
         function: ${comp:getUsers.arn}
+        authorizer: ${comp:auth.arn}
 ```
 
 #### Extending REST APIs

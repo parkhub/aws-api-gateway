@@ -1,3 +1,5 @@
+const AWS = require('aws-sdk')
+
 const apiExists = async ({ apig, apiId }) => {
   try {
     await apig.getRestApi({ restApiId: apiId }).promise()
@@ -196,6 +198,11 @@ const createMethod = async ({ apig, apiId, endpoint }) => {
     apiKeyRequired: false
   }
 
+  if (endpoint.authorizerId) {
+    params.authorizationType = 'CUSTOM'
+    params.authorizerId = endpoint.authorizerId
+  }
+
   try {
     await apig.putMethod(params).promise()
   } catch (e) {
@@ -233,7 +240,11 @@ const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
     }/invocations`
   }
 
-  const res = await apig.putIntegration(integrationParams).promise()
+  try {
+    await apig.putIntegration(integrationParams).promise()
+  } catch (e) {
+    throw Error(e)
+  }
 
   const permissionsParams = {
     Action: 'lambda:InvokeFunction',
@@ -247,7 +258,7 @@ const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
 
   await lambda.addPermission(permissionsParams).promise()
 
-  return res
+  return endpoint
 }
 
 const createIntegrations = async ({ apig, lambda, apiId, endpoints }) => {
@@ -257,9 +268,7 @@ const createIntegrations = async ({ apig, lambda, apiId, endpoints }) => {
     promises.push(createIntegration({ apig, lambda, apiId, endpoint }))
   }
 
-  await Promise.all(promises)
-
-  return endpoints
+  return Promise.all(promises)
 }
 
 const createDeployment = async ({ apig, apiId, stage }) => {
@@ -349,6 +358,178 @@ const removeApi = async ({ apig, apiId }) => {
   } catch (e) {}
 }
 
+const createAuthorizer = async ({ apig, lambda, apiId, endpoint }) => {
+  if (endpoint.authorizer) {
+    const authorizerName = endpoint.authorizer.split(':')[6]
+    const region = endpoint.authorizer.split(':')[3]
+    const accountId = endpoint.authorizer.split(':')[4]
+
+    const authorizers = await apig.getAuthorizers({ restApiId: apiId }).promise()
+
+    let authorizer = authorizers.items.find(
+      (authorizerItem) => authorizerItem.name === authorizerName
+    )
+
+    if (!authorizer) {
+      const createAuthorizerParams = {
+        name: authorizerName,
+        restApiId: apiId,
+        type: 'TOKEN',
+        authorizerUri: `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${
+          endpoint.authorizer
+        }/invocations`,
+        identitySource: 'method.request.header.Auth'
+      }
+
+      authorizer = await apig.createAuthorizer(createAuthorizerParams).promise()
+
+      const permissionsParams = {
+        Action: 'lambda:InvokeFunction',
+        FunctionName: authorizerName,
+        Principal: 'apigateway.amazonaws.com',
+        SourceArn: `arn:aws:execute-api:${region}:${accountId}:${apiId}/*/*`,
+        StatementId: `${authorizerName}-http-${Math.random()
+          .toString(36)
+          .substring(7)}`
+      }
+
+      await lambda.addPermission(permissionsParams).promise()
+    }
+
+    endpoint.authorizerId = authorizer.id
+  }
+  return endpoint
+}
+
+const createAuthorizers = async ({ apig, lambda, apiId, endpoints }) => {
+  const updatedEndpoints = []
+
+  for (const endpoint of endpoints) {
+    endpoint.authorizerId = (await createAuthorizer({ apig, lambda, apiId, endpoint })).authorizerId
+    updatedEndpoints.push(endpoint)
+  }
+
+  return updatedEndpoints
+}
+
+const getMethodWithAuthorizer = async ({ apig, apiId, methodObj }) => {
+  methodObj.authorizerId =
+    (await apig
+      .getMethod({
+        restApiId: apiId,
+        resourceId: methodObj.resourceid,
+        httpMethod: methodObj.method
+      })
+      .promise()).authorizerId || null
+
+  return methodObj
+}
+
+const getMethodsWithAuthorizer = async ({ apig, apiId }) => {
+  const methods = []
+
+  const resources = (await apig
+    .getResources({
+      restApiId: apiId
+    })
+    .promise()).items
+
+  for (const resource of resources) {
+    const resourceMethods = resource ? Object.keys(resource.resourceMethods || {}) : []
+    for (const resourceMethod of resourceMethods) {
+      const methodObj = {
+        resourceId: resource.id,
+        method: resourceMethod
+      }
+      methods.push(methodObj)
+    }
+  }
+
+  const promises = []
+  for (const methodObj of methods) {
+    promises.push(getMethodWithAuthorizer({ apig, apiId, methodObj }))
+  }
+
+  return Promise.all(promises)
+}
+
+const getExternalMethodsWithAuthorizer = (methods, endpoints) => {
+  const externalMethodsWithAuthorizer = []
+
+  for (const method of methods) {
+    const endpointFound = endpoints.find(
+      (endpoint) => endpoint.id === method.resourceId && method.method === endpoint.method
+    )
+
+    if (!endpointFound) {
+      externalMethodsWithAuthorizer.push(method)
+    }
+  }
+
+  return externalMethodsWithAuthorizer
+}
+
+const getAuthorizersToRemove = async ({ apig, apiId, endpoints }) => {
+  const authorizersToRemove = []
+
+  const methodsWithAuthorizer = await getMethodsWithAuthorizer({ apig, apiId })
+  const externalMethodsWithAuthorizer = getExternalMethodsWithAuthorizer(
+    methodsWithAuthorizer,
+    endpoints
+  )
+
+  for (const endpoint of endpoints) {
+    const methodFound = externalMethodsWithAuthorizer.find(
+      (externalMethod) =>
+        externalMethod.resourceId === endpoint.id && externalMethod.method === endpoint.method
+    )
+
+    if (!methodFound) {
+      authorizersToRemove.push(endpoint)
+    }
+  }
+
+  return authorizersToRemove
+}
+
+const removeAuthorizer = async ({ apig, apiId, endpoint }) => {
+  // todo only remove authorizers that are not used by other services
+  if (endpoint.authorizerId) {
+    await apig.deleteAuthorizer({ restApiId: apiId, authorizerId: endpoint.authorizerId }).promise()
+  }
+  return endpoint
+}
+
+const removeAuthorizers = async ({ apig, apiId, endpoints }) => {
+  const promises = []
+
+  for (const endpoint of endpoints) {
+    promises.push(removeAuthorizer({ apig, apiId, endpoint }))
+  }
+
+  await Promise.all(promises)
+
+  return endpoints
+}
+
+const removeOutdatedEndpoints = async ({ apig, apiId, endpoints, stateEndpoints }) => {
+  const outdatedEndpoints = []
+  for (const stateEndpoint of stateEndpoints) {
+    const endpointInUse = endpoints.find(
+      (endpoint) => endpoint.method === stateEndpoint.method && endpoint.path === stateEndpoint.path
+    )
+
+    if (!endpointInUse) {
+      outdatedEndpoints.push(stateEndpoint)
+    }
+  }
+
+  await removeResources({ apig, apiId, endpoints: outdatedEndpoints })
+  await removeMethods({ apig, apiId, endpoints: outdatedEndpoints })
+
+  return outdatedEndpoints
+}
+
 module.exports = {
   validateEndpointObject,
   validateEndpoint,
@@ -358,6 +539,8 @@ module.exports = {
   apiExists,
   createApi,
   getPathId,
+  createAuthorizer,
+  createAuthorizers,
   createPath,
   createPaths,
   createMethod,
@@ -369,5 +552,8 @@ module.exports = {
   removeMethods,
   removeResource,
   removeResources,
-  removeApi
+  removeAuthorizer,
+  removeAuthorizers,
+  removeApi,
+  removeOutdatedEndpoints
 }

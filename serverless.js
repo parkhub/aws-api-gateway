@@ -1,17 +1,20 @@
 const AWS = require('aws-sdk')
-const { Component } = require('@serverless/components')
+const { Component, sleep } = require('@serverless/components')
 
 const {
   apiExists,
   createApi,
   validateEndpoints,
+  createAuthorizers,
   createPaths,
   createMethods,
   createIntegrations,
   createDeployment,
   removeApi,
   removeMethods,
-  removeResources
+  removeAuthorizers,
+  removeResources,
+  removeOutdatedEndpoints
 } = require('./utils')
 
 const defaults = {
@@ -59,15 +62,26 @@ class AwsApiGateway extends Component {
       region
     })
 
+    endpoints = await createAuthorizers({ apig, lambda, apiId, endpoints })
     endpoints = await createPaths({ apig, apiId, endpoints })
     endpoints = await createMethods({ apig, apiId, endpoints })
 
-    this.state.endpoints = endpoints
-    await this.save()
+    await sleep(2000) // need to sleep for a bit between method and integration creation
 
     endpoints = await createIntegrations({ apig, lambda, apiId, endpoints })
 
+    // keep endpoints in sync with provider
+    await removeOutdatedEndpoints({
+      apig,
+      apiId,
+      endpoints,
+      stateEndpoints: this.state.endpoints || []
+    })
+
     await createDeployment({ apig, apiId, stage })
+
+    this.state.endpoints = endpoints
+    await this.save()
 
     const outputs = {
       id: apiId,
@@ -92,6 +106,7 @@ class AwsApiGateway extends Component {
     if (this.state.id) {
       await removeApi({ apig, apiId: this.state.id })
     } else if (inputs.id && this.state.endpoints && this.state.endpoints.length !== undefined) {
+      await removeAuthorizers({ apig, apiId: inputs.id, endpoints: this.state.endpoints })
       await removeMethods({ apig, apiId: inputs.id, endpoints: this.state.endpoints })
       await removeResources({ apig, apiId: inputs.id, endpoints: this.state.endpoints })
     }
