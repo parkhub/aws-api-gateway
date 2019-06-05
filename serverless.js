@@ -91,13 +91,12 @@ class AwsApiGateway extends Component {
 
     let endpointsOutputValue = `\n`
     for (const endpoint of outputs.endpoints) {
-      endpointsOutputValue = `${endpointsOutputValue}    - ${endpoint.method} ${endpoint.url}${
-        endpoint.path
-      }\n`
+      endpointsOutputValue = `${endpointsOutputValue}    - ${endpoint.method} ${endpoint.path}\n`
     }
 
     this.ui.log()
     this.ui.output('id', `       ${outputs.id}`)
+    this.ui.output('url', `      ${outputs.url}`)
     this.ui.output('endpoints', `${endpointsOutputValue}`)
 
     return outputs
