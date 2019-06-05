@@ -1,5 +1,3 @@
-const AWS = require('aws-sdk')
-
 const apiExists = async ({ apig, apiId }) => {
   try {
     await apig.getRestApi({ restApiId: apiId }).promise()

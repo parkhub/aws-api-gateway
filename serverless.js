@@ -1,5 +1,5 @@
 const AWS = require('aws-sdk')
-const { Component, sleep } = require('@serverless/components')
+const { Component, utils } = require('@serverless/components')
 
 const {
   apiExists,
@@ -25,7 +25,7 @@ const defaults = {
 
 class AwsApiGateway extends Component {
   async default(inputs = {}) {
-    this.cli.status('Deploying')
+    this.ui.status('Deploying')
     const config = { ...defaults, ...inputs }
     const { name, description, region } = config
     const { stage } = this.context
@@ -66,7 +66,7 @@ class AwsApiGateway extends Component {
     endpoints = await createPaths({ apig, apiId, endpoints })
     endpoints = await createMethods({ apig, apiId, endpoints })
 
-    await sleep(2000) // need to sleep for a bit between method and integration creation
+    await utils.sleep(2000) // need to sleep for a bit between method and integration creation
 
     endpoints = await createIntegrations({ apig, lambda, apiId, endpoints })
 
@@ -89,13 +89,19 @@ class AwsApiGateway extends Component {
       url: `https://${apiId}.execute-api.${region}.amazonaws.com/${stage}/`
     }
 
-    this.cli.outputs(outputs)
+    this.ui.log()
+    this.ui.output('id', ` ${outputs.id}`)
+    this.ui.output('url', `${outputs.url}`)
+    this.ui.output('endpoints', `${endpoints.length}`)
+    for (const endpoint of endpoints) {
+      this.ui.log(`  - ${endpoint.method} ${endpoint.path}`)
+    }
 
     return outputs
   }
 
   async remove(inputs = {}) {
-    this.cli.status('Removing')
+    this.ui.status('Removing')
     const config = { ...defaults, ...inputs }
 
     const apig = new AWS.APIGateway({
