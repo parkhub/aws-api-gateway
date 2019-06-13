@@ -1,5 +1,5 @@
 const AWS = require('aws-sdk')
-const { Component, utils } = require('@serverless/components')
+const { Component, utils } = require('@serverless/core')
 
 const {
   apiExists,
@@ -19,16 +19,16 @@ const {
 
 const defaults = {
   region: 'us-east-1',
+  stage: 'dev',
   name: 'serverless-components-api',
   description: 'Serverless Components API'
 }
 
 class AwsApiGateway extends Component {
   async default(inputs = {}) {
-    this.ui.status('Deploying')
+    this.context.status('Deploying')
     const config = { ...defaults, ...inputs }
-    const { name, description, region } = config
-    const { stage } = this.context
+    const { name, description, region, stage } = config
 
     // todo quick fix for array of objects in yaml issue
     config.endpoints = Object.keys(config.endpoints).map((e) => config.endpoints[e])
@@ -94,16 +94,16 @@ class AwsApiGateway extends Component {
       endpointsOutputValue = `${endpointsOutputValue}    - ${endpoint.method} ${endpoint.path}\n`
     }
 
-    this.ui.log()
-    this.ui.output('id', `       ${outputs.id}`)
-    this.ui.output('url', `      ${outputs.url}`)
-    this.ui.output('endpoints', `${endpointsOutputValue}`)
+    this.context.log()
+    this.context.output('id', `       ${outputs.id}`)
+    this.context.output('url', `      ${outputs.url}`)
+    this.context.output('endpoints', `${endpointsOutputValue}`)
 
     return outputs
   }
 
   async remove(inputs = {}) {
-    this.ui.status('Removing')
+    this.context.status('Removing')
     const config = { ...defaults, ...inputs }
 
     const apig = new AWS.APIGateway({
