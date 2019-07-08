@@ -233,9 +233,7 @@ const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
     restApiId: apiId,
     type: 'AWS_PROXY',
     integrationHttpMethod: 'POST',
-    uri: `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${
-      endpoint.function
-    }/invocations`
+    uri: `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${endpoint.function}/invocations`
   }
 
   try {
@@ -249,12 +247,16 @@ const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
     FunctionName: functionName,
     Principal: 'apigateway.amazonaws.com',
     SourceArn: `arn:aws:execute-api:${region}:${accountId}:${apiId}/*/*`,
-    StatementId: `${functionName}-http-${Math.random()
-      .toString(36)
-      .substring(7)}`
+    StatementId: `${functionName}-${apiId}`
   }
 
-  await lambda.addPermission(permissionsParams).promise()
+  try {
+    await lambda.addPermission(permissionsParams).promise()
+  } catch (e) {
+    if (e.code !== 'ResourceConflictException') {
+      throw Error(e)
+    }
+  }
 
   return endpoint
 }
@@ -373,9 +375,7 @@ const createAuthorizer = async ({ apig, lambda, apiId, endpoint }) => {
         name: authorizerName,
         restApiId: apiId,
         type: 'TOKEN',
-        authorizerUri: `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${
-          endpoint.authorizer
-        }/invocations`,
+        authorizerUri: `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${endpoint.authorizer}/invocations`,
         identitySource: 'method.request.header.Auth'
       }
 
@@ -386,12 +386,16 @@ const createAuthorizer = async ({ apig, lambda, apiId, endpoint }) => {
         FunctionName: authorizerName,
         Principal: 'apigateway.amazonaws.com',
         SourceArn: `arn:aws:execute-api:${region}:${accountId}:${apiId}/*/*`,
-        StatementId: `${authorizerName}-http-${Math.random()
-          .toString(36)
-          .substring(7)}`
+        StatementId: `${authorizerName}-${apiId}`
       }
 
-      await lambda.addPermission(permissionsParams).promise()
+      try {
+        await lambda.addPermission(permissionsParams).promise()
+      } catch (e) {
+        if (e.code !== 'ResourceConflictException') {
+          throw Error(e)
+        }
+      }
     }
 
     endpoint.authorizerId = authorizer.id
