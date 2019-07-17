@@ -1,3 +1,5 @@
+const { utils } = require('@serverless/core')
+
 const apiExists = async ({ apig, apiId }) => {
   try {
     await apig.getRestApi({ restApiId: apiId }).promise()
@@ -239,6 +241,13 @@ const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
   try {
     await apig.putIntegration(integrationParams).promise()
   } catch (e) {
+    if (e.code === 'ConflictException') {
+      // this usually happens when there are too many endpoints for
+      // the same function. Retrying after couple of seconds ensures
+      // any pending integration requests are resolved.
+      await utils.sleep(2000)
+      return createIntegration({ apig, lambda, apiId, endpoint })
+    }
     throw Error(e)
   }
 
