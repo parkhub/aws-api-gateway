@@ -26,7 +26,7 @@ The complete AWS API Gateway Framework, powered by [Serverless Components](https
 ### 1. Install
 
 ```shell
-$ npm install -g @serverless/components
+$ npm install -g serverless
 ```
 
 ### 2. Create
@@ -36,8 +36,13 @@ Just create the following simple boilerplate:
 ```shell
 $ touch serverless.yml # more info in the "Configure" section below
 $ touch index.js       # your lambda code
-$ touch .env           # your development AWS api keys
-$ touch .env.prod      # your production AWS api keys
+$ touch .env           # your AWS api keys
+```
+
+```
+# .env
+AWS_ACCESS_KEY_ID=XXX
+AWS_SECRET_ACCESS_KEY=XXX
 ```
 
 the `index.js` file should look something like this:
@@ -77,13 +82,6 @@ module.exports.auth = async (event, context) => {
 
 ```
 
-the `.env` files are not required if you have the aws keys set globally and you want to use a single stage, but they should look like this.
-
-```
-AWS_ACCESS_KEY_ID=XXX
-AWS_SECRET_ACCESS_KEY=XXX
-```
-
 Keep reading for info on how to set up the `serverless.yml` file.
 
 ### 3. Configure
@@ -95,41 +93,35 @@ You can create new REST APIs by specifying the endpoints you'd like to create, a
 ```yml
 # serverless.yml
 
-name: rest-api
-
 createUser:
   component: "@serverless/aws-lambda"
   inputs:
-    name: ${name}-create-user
     code: ./code
     handler: index.createUser
 getUsers:
   component: "@serverless/aws-lambda"
   inputs:
-    name: ${name}-get-users
     code: ./code
     handler: index.getUsers
 auth:
   component: "@serverless/aws-lambda"
   inputs:
-    name: ${name}-auth
     code: ./code
     handler: index.auth
 
 restApi:
   component: "@serverless/aws-api-gateway"
   inputs:
-    name: ${name}
     description: Serverless REST API
     endpoints:
       - path: /users
         method: POST
-        function: ${comp:createUser.arn}
-        authorizer: ${comp:auth.arn}
+        function: ${createUser.arn}
+        authorizer: ${auth.arn}
       - path: /users
         method: GET
-        function: ${comp:getUsers.arn}
-        authorizer: ${comp:auth.arn}
+        function: ${getUsers.arn}
+        authorizer: ${auth.arn}
 ```
 
 #### Extending REST APIs
@@ -138,18 +130,14 @@ You can extend existing REST APIs by specifying the REST API ID. This will **onl
 ```yml
 # serverless.yml
 
-name: rest-api
-
 createUser:
   component: "@serverless/aws-lambda"
   inputs:
-    name: ${name}-create-user
     code: ./code
     handler: index.createUser
 getUsers:
   component: "@serverless/aws-lambda"
   inputs:
-    name: ${name}-get-users
     code: ./code
     handler: index.getUsers
 
@@ -160,39 +148,16 @@ restApi:
     endpoints:
       - path: /users
         method: POST
-        function: ${comp:createUser.arn}
+        function: ${createUser.arn}
       - path: /users
         method: GET
-        function: ${comp:getUsers.arn}
+        function: ${getUsers.arn}
 ```
 
 ### 4. Deploy
 
 ```shell
-api (master)$ components
-
-  myApig › outputs:
-  id:  'e4asreichk'
-  endpoints:  [ { path: '/users',
-    method: 'POST',
-    function:
-     'arn:aws:lambda:us-east-1:552750238291:function:rest-api-create-user',
-    url:
-     'https://e4asreichk.execute-api.us-east-1.amazonaws.com/dev/users',
-    id: 'jkgqlqjnf2' },
-  { path: '/users',
-    method: 'GET',
-    function:
-     'arn:aws:lambda:us-east-1:552750238291:function:rest-api-get-users',
-    url:
-     'https://e4asreichk.execute-api.us-east-1.amazonaws.com/dev/users',
-    id: 'h7zh3r' } ]
-
-
-  38s › dev › rest-api › done
-
-api (master)$
-
+$ serverless
 ```
 
 &nbsp;
