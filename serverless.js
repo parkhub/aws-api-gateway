@@ -145,9 +145,7 @@ class AwsApiGateway extends Component {
       await removeApi({ apig, apiId: this.state.id })
 
       this.context.debug(
-        `API with ID ${this.state.id} was successfully removed from the ${
-          this.state.region
-        } region.`
+        `API with ID ${this.state.id} was successfully removed from the ${this.state.region} region.`
       )
     } else if (inputs.id && this.state.endpoints && this.state.endpoints.length !== undefined) {
       this.context.debug(`No API ID found in state.`)
