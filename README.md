@@ -88,7 +88,7 @@ Keep reading for info on how to set up the `serverless.yml` file.
 You can configure the component to either create a new REST API from scratch, or extend an existing one.
 
 #### Creating REST APIs
-You can create new REST APIs by specifying the endpoints you'd like to create, and optionally passing a name and description for your new REST API.
+You can create new REST APIs by specifying the endpoints you'd like to create, and optionally passing a name and description for your new REST API. You may also choose between a lambda proxy or http proxy integration by using the function or proxyURI field respectively. The function field will override the proxyURI field.
 
 ```yml
 # serverless.yml
@@ -121,6 +121,10 @@ restApi:
       - path: /users
         method: GET
         function: ${getUsers.arn}
+        authorizer: ${auth.arn}
+      - path: /users
+        method: PUT
+        proxyURI: https://example.com/users
         authorizer: ${auth.arn}
 ```
 
