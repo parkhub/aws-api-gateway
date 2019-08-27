@@ -246,17 +246,24 @@ const createMethods = async ({ apig, apiId, endpoints }) => {
 }
 
 const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
-  const functionName = endpoint.function.split(':')[6]
-  const accountId = endpoint.function.split(':')[4]
-  const region = endpoint.function.split(':')[3] // todo what if the lambda in another region?
+  const isLambda = !!endpoint.function
+  let functionName, accountId, region
+
+  if (isLambda) {
+    functionName = endpoint.function.split(':')[6]
+    accountId = endpoint.function.split(':')[4]
+    region = endpoint.function.split(':')[3] // todo what if the lambda in another region?
+  }
 
   const integrationParams = {
     httpMethod: endpoint.method,
     resourceId: endpoint.id,
     restApiId: apiId,
-    type: 'AWS_PROXY',
+    type: isLambda ? 'AWS_PROXY' : 'HTTP_PROXY',
     integrationHttpMethod: 'POST',
-    uri: `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${endpoint.function}/invocations`
+    uri: (isLambda
+      ? `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${endpoint.function}/invocations`
+      : endpoint.proxyURI)
   }
 
   try {
@@ -272,19 +279,22 @@ const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
     throw Error(e)
   }
 
-  const permissionsParams = {
-    Action: 'lambda:InvokeFunction',
-    FunctionName: functionName,
-    Principal: 'apigateway.amazonaws.com',
-    SourceArn: `arn:aws:execute-api:${region}:${accountId}:${apiId}/*/*`,
-    StatementId: `${functionName}-${apiId}`
-  }
+  // Create lambda trigger for AWS_PROXY endpoints
+  if (isLambda) {
+    const permissionsParams = {
+      Action: 'lambda:InvokeFunction',
+      FunctionName: functionName,
+      Principal: 'apigateway.amazonaws.com',
+      SourceArn: `arn:aws:execute-api:${region}:${accountId}:${apiId}/*/*`,
+      StatementId: `${functionName}-${apiId}`
+    }
 
-  try {
-    await lambda.addPermission(permissionsParams).promise()
-  } catch (e) {
-    if (e.code !== 'ResourceConflictException') {
-      throw Error(e)
+    try {
+      await lambda.addPermission(permissionsParams).promise()
+    } catch (e) {
+      if (e.code !== 'ResourceConflictException') {
+        throw Error(e)
+      }
     }
   }
 
