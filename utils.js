@@ -12,11 +12,14 @@ const apiExists = async ({ apig, apiId }) => {
   }
 }
 
-const createApi = async ({ apig, name, description }) => {
+const createApi = async ({ apig, name, description, endpointTypes }) => {
   const api = await apig
     .createRestApi({
       name,
-      description
+      description,
+      endpointConfiguration: {
+        types: endpointTypes
+      }
     })
     .promise()
 
@@ -261,9 +264,9 @@ const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
     restApiId: apiId,
     type: isLambda ? 'AWS_PROXY' : 'HTTP_PROXY',
     integrationHttpMethod: 'POST',
-    uri: (isLambda
+    uri: isLambda
       ? `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${endpoint.function}/invocations`
-      : endpoint.proxyURI)
+      : endpoint.proxyURI
   }
 
   try {
