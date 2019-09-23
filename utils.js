@@ -1,4 +1,19 @@
+const pRetry = require('p-retry')
 const { utils } = require('@serverless/core')
+
+const retry = (fn, opts = {}) => {
+  return pRetry(fn, {
+    retries: 5,
+    minTimeout: 1000,
+    factor: 2,
+    onFailedAttempt: (error) => {
+      if (error.code !== 'TooManyRequestsException') {
+        throw error
+      }
+    },
+    ...opts
+  })
+}
 
 const apiExists = async ({ apig, apiId }) => {
   try {
@@ -49,7 +64,7 @@ const getPathId = async ({ apig, apiId, endpoint }) => {
 }
 
 const endpointExists = async ({ apig, apiId, endpoint }) => {
-  const resourceId = await getPathId({ apig, apiId, endpoint })
+  const resourceId = await retry(() => getPathId({ apig, apiId, endpoint }))
 
   if (!resourceId) {
     return false
@@ -62,7 +77,7 @@ const endpointExists = async ({ apig, apiId, endpoint }) => {
   }
 
   try {
-    await apig.getMethod(params).promise()
+    await retry(() => apig.getMethod(params).promise())
     return true
   } catch (e) {
     if (e.code === 'NotFoundException') {
@@ -545,5 +560,6 @@ module.exports = {
   removeAuthorizer,
   removeAuthorizers,
   removeApi,
-  removeOutdatedEndpoints
+  removeOutdatedEndpoints,
+  retry
 }

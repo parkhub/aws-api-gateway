@@ -1,5 +1,4 @@
 const AWS = require('aws-sdk')
-const pRetry = require('p-retry')
 const { Component, utils } = require('@serverless/core')
 
 const {
@@ -15,7 +14,8 @@ const {
   removeMethods,
   removeAuthorizers,
   removeResources,
-  removeOutdatedEndpoints
+  removeOutdatedEndpoints,
+  retry
 } = require('./utils')
 
 const defaults = {
@@ -108,16 +108,7 @@ class AwsApiGateway extends Component {
       `Creating deployment for API ID ${apiId} in the ${stage} stage and the ${region} region.`
     )
 
-    await pRetry(() => createDeployment({ apig, apiId, stage }), {
-      retries: 5,
-      minTimeout: 1000,
-      factor: 2,
-      onFailedAttempt: (error) => {
-        this.context.debug(
-          `[WARNING] Attempt ${error.attemptNumber} failed. There are ${error.retriesLeft} retries left.`
-        )
-      }
-    })
+    await retry(() => createDeployment({ apig, apiId, stage }))
 
     config.url = `https://${apiId}.execute-api.${region}.amazonaws.com/${stage}`
 
