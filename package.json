@@ -13,7 +13,8 @@
   "license": "Apache",
   "dependencies": {
     "@serverless/core": "^1.0.0",
-    "aws-sdk": "^2.0.0"
+    "aws-sdk": "^2.0.0",
+    "p-retry": "^4.1.0"
   },
   "devDependencies": {
     "babel-eslint": "9.0.0",
