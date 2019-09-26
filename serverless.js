@@ -14,7 +14,8 @@ const {
   removeMethods,
   removeAuthorizers,
   removeResources,
-  removeOutdatedEndpoints
+  removeOutdatedEndpoints,
+  retry
 } = require('./utils')
 
 const defaults = {
@@ -107,7 +108,7 @@ class AwsApiGateway extends Component {
       `Creating deployment for API ID ${apiId} in the ${stage} stage and the ${region} region.`
     )
 
-    await createDeployment({ apig, apiId, stage })
+    await retry(() => createDeployment({ apig, apiId, stage }))
 
     config.url = `https://${apiId}.execute-api.${region}.amazonaws.com/${stage}`
 
