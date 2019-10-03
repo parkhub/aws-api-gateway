@@ -2,17 +2,25 @@ const pRetry = require('p-retry')
 const { utils } = require('@serverless/core')
 
 const retry = (fn, opts = {}) => {
-  return pRetry(fn, {
-    retries: 5,
-    minTimeout: 1000,
-    factor: 2,
-    onFailedAttempt: (error) => {
-      if (error.code !== 'TooManyRequestsException') {
+  return pRetry(
+    async () => {
+      try {
+        return await fn()
+      } catch (error) {
+        if (error.code !== 'TooManyRequestsException') {
+          // Stop retrying and throw the error
+          throw new pRetry.AbortError(error)
+        }
         throw error
       }
     },
-    ...opts
-  })
+    {
+      retries: 5,
+      minTimeout: 1000,
+      factor: 2,
+      ...opts
+    }
+  )
 }
 
 const apiExists = async ({ apig, apiId }) => {
