@@ -1,5 +1,5 @@
 {
-  "name": "@serverless/aws-api-gateway",
+  "name": "@parkhub/aws-api-gateway",
   "version": "4.0.0",
   "main": "./serverless.js",
   "publishConfig": {
