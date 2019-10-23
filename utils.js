@@ -276,16 +276,20 @@ const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
   let functionName, accountId, region
 
   if (isLambda) {
+    if (endpoint.function.slice(0, 4) !== "arn:") {
+      const func = await lambda.getFunction({ FunctionName: endpoint.authorizer }).promise()
+      endpoint.function = func.Configuration.FunctionArn
+    }
     functionName = endpoint.function.split(':')[6]
     accountId = endpoint.function.split(':')[4]
-    region = endpoint.function.split(':')[3] // todo what if the lambda in another region?
+    region = endpoint.function.split(':')[3]
   }
 
   const integrationParams = {
     httpMethod: endpoint.method,
     resourceId: endpoint.id,
     restApiId: apiId,
-    type: isLambda ? 'AWS_PROXY' : 'HTTP_PROXY',
+    type: isLambda ? 'AWS_PROXY' : 'HTTP',
     integrationHttpMethod: 'POST',
     uri: isLambda
       ? `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${endpoint.function}/invocations`
@@ -426,6 +430,10 @@ const removeApi = async ({ apig, apiId }) => {
 
 const createAuthorizer = async ({ apig, lambda, apiId, endpoint }) => {
   if (endpoint.authorizer) {
+    if (endpoint.authorizer.slice(0,4) !== "arn:") {
+      const func = await lambda.getFunction({FunctionName: endpoint.authorizer}).promise()
+      endpoint.authorizer = func.Configuration.FunctionArn
+    }
     const authorizerName = endpoint.authorizer.split(':')[6]
     const region = endpoint.authorizer.split(':')[3]
     const accountId = endpoint.authorizer.split(':')[4]
