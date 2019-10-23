@@ -289,7 +289,7 @@ const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
     integrationHttpMethod: 'POST',
     uri: isLambda
       ? `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${endpoint.function}/invocations`
-      : endpoint.proxyURI
+      : endpoint.URI
   }
 
   try {
