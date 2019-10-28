@@ -8,7 +8,7 @@ The complete AWS API Gateway Framework, powered by [Serverless Components](https
 - Extend Existing API Gateway REST APIs without disrupting other services.
 - Integrate with AWS Lambda via the [aws-lambda component](https://github.com/serverless-components/aws-lambda)
 - Authorize requests with AWS Lambda authorizers
-- Create proxy endpoints for any URL with 3 lines of code (coming soon)
+- Create proxy endpoints for any URL with 3 lines of code
 - Create mock endpoints by specifying the object you'd like to return (coming soon)
 - Debug API Gateway requests Via CloudWatch Logs (coming soon)
 - Protect your API with API Keys (coming soon)
@@ -88,7 +88,9 @@ Keep reading for info on how to set up the `serverless.yml` file.
 You can configure the component to either create a new REST API from scratch, or extend an existing one.
 
 #### Creating REST APIs
-You can create new REST APIs by specifying the endpoints you'd like to create, and optionally passing a name and description for your new REST API. You may also choose between a lambda proxy or http proxy integration by using the function or proxyURI field respectively. The function field will override the proxyURI field.
+You can create new REST APIs by specifying the endpoints you'd like to create, and optionally passing a name 
+and description for your new REST API. You may also choose between a lambda proxy, or http integration by 
+using the function or URI field respectively.
 
 ```yml
 # serverless.yml
@@ -122,10 +124,22 @@ restApi:
         method: GET
         function: ${getUsers.arn}
         authorizer: ${auth.arn}
-      - path: /users
+
+        # create a resource with a variable in the path
+      - path: /users/{ID}
         method: PUT
-        proxyURI: https://example.com/users
-        authorizer: ${auth.arn}
+        # The above path makes ID available to use in your uri
+        URI: https://example.com/users/{ID}
+        # authorizer also take a name for existing endpoints
+        authorizer: auth-dev
+        # params sets method and integration request headers and querystring parameters
+        params:
+          headers:
+            auth: true  # keys with a boolean value state whether it is required or not
+            policy: users-mod
+          querystrings:
+            name: true
+            status: active # keys with a string value creates a corresponding static variable in integration request only
 ```
 
 #### Extending REST APIs
