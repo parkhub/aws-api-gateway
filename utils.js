@@ -104,6 +104,37 @@ const myEndpoint = (state, endpoint) => {
   return false
 }
 
+const isModifiedEndpoint = ({ endpoint, previousEndpoint }) => {
+  const props = Object.getOwnPropertyNames(endpoint)
+  return !props.every((prop) => {
+    // function or authorizer could be either an arn or function-name so check both
+    if (prop === 'authorizer' || prop === 'function') {
+        return endpoint[prop] === previousEndpoint[prop] || endpoint[prop] === previousEndpoint[prop].split(':')[6]
+
+    // check every key in headers and querystrings objects in params
+    } else if (prop === 'params' && previousEndpoint[prop]) {
+      const every = (param) => Object.keys(endpoint[prop][param]).every((key) => {
+        return endpoint[prop][param][key] === previousEndpoint[prop][param][key]
+      })
+
+      const h = endpoint[prop].headers && previousEndpoint[prop].headers
+        ? every("headers")
+        : false
+      const q = endpoint[prop].querystrings && previousEndpoint[prop].querystrings
+        ? every("querystrings")
+        : false
+
+      return h && q
+
+    // everything else should be a straigt equality
+    } else if (prop !== 'params') {
+      return endpoint[prop] === previousEndpoint[prop]
+    }
+
+    return false
+  })
+}
+
 const validateEndpointObject = ({ endpoint, apiId, stage, region }) => {
   const validMethods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'ANY']
 
@@ -166,11 +197,12 @@ const validateEndpoint = async ({ apig, apiId, endpoint, state, stage, region })
 }
 
 const validateEndpoints = async ({ apig, apiId, endpoints, state, stage, region }) => {
-  const promises = []
-
-  for (const endpoint of endpoints) {
-    promises.push(validateEndpoint({ apig, apiId, endpoint, state, stage, region }))
-  }
+  const promises = endpoints.reduce((p, endpoint, i) => {
+    if (isModifiedEndpoint({ endpoint, previousEndpoint: state.endpoints[i] })) {
+      p.push(validateEndpoint({ apig, apiId, endpoint, state, stage, region }))
+    }
+    return p
+  }, [])
 
   return Promise.all(promises)
 }
