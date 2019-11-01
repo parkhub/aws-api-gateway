@@ -771,9 +771,9 @@ const removeOutdatedEndpoints = async ({ apig, apiId, endpoints, stateEndpoints 
     }
   }
 
-  await removeResources({ apig, apiId, endpoints: outdatedEndpoints })
   await removeMethods({ apig, apiId, endpoints: outdatedEndpoints })
   await removeAuthorizers({ apig, apiId, endpoints: outdatedAuthorizers })
+  await removeResources({ apig, apiId, endpoints: outdatedEndpoints })
 
   return outdatedEndpoints
 }
