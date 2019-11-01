@@ -105,30 +105,22 @@ const myEndpoint = (state, endpoint) => {
 }
 
 const isModifiedEndpoint = ({ endpoint, previousEndpoint }) => {
-  const props = Object.getOwnPropertyNames(endpoint)
-  return !props.every((prop) => {
+  return !Object.keys(endpoint).every((prop) => {
     // function or authorizer could be either an arn or function-name so check both
-    if (prop === 'authorizer' || prop === 'function') {
-        return endpoint[prop] === previousEndpoint[prop] || endpoint[prop] === previousEndpoint[prop].split(':')[6]
+    if ((prop === 'authorizer' || prop === 'function') && previousEndpoint[prop]) {
+      return endpoint[prop] === previousEndpoint[prop] || endpoint[prop] === previousEndpoint[prop].split(':')[6]
 
-    // check every key in headers and querystrings objects in params
-    } else if (prop === 'params' && previousEndpoint[prop]) {
-      const every = (param) => Object.keys(endpoint[prop][param]).every((key) => {
-        return endpoint[prop][param][key] === previousEndpoint[prop][param][key]
+    } else if (endpoint[prop] && previousEndpoint[prop]) {
+      // Recursively check for equality on every key in the endpoint object
+      const every = (obj, prevObj) => Object.keys(obj).every((key) => {
+        if (typeof obj[key] === 'object' && prevObj[key]) {
+          return every(obj[key], prevObj[key])
+        }
+
+        return obj[key] === prevObj[key]
       })
 
-      const h = endpoint[prop].headers && previousEndpoint[prop].headers
-        ? every("headers")
-        : false
-      const q = endpoint[prop].querystrings && previousEndpoint[prop].querystrings
-        ? every("querystrings")
-        : false
-
-      return h && q
-
-    // everything else should be a straigt equality
-    } else if (prop !== 'params') {
-      return endpoint[prop] === previousEndpoint[prop]
+      return every(endpoint[prop], previousEndpoint[prop])
     }
 
     return false
