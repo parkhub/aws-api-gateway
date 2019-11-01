@@ -96,6 +96,14 @@ class AwsApiGateway extends Component {
 
     this.context.debug(`Removing any old endpoints for API ID ${apiId}.`)
 
+    // re-combine existing and modified endpoints
+    endpoints = config.endpoints.map(endpoint => {
+      const modifiedEndpoint = endpoints.find(e => {
+        return e.path === endpoint.path
+      })
+      return modifiedEndpoint || endpoint
+    })
+
     // keep endpoints in sync with provider
     await removeOutdatedEndpoints({
       apig,
