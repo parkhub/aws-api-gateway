@@ -137,7 +137,7 @@ class AwsApiGateway extends Component {
     endpoints = mergeEndpointObjects({
       endpoints,
       configEndpoints: config.endpoints,
-      stateEndpoints: state.endpoints
+      stateEndpoints: this.state.endpoints || []
     })
 
     // keep endpoints in sync with provider
