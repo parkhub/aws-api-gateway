@@ -119,7 +119,7 @@ const myEndpoint = (state, endpoint) => {
   return false
 }
 
-const mergeEndpointObject = ({ endpoints, configEndpoints, stateEndpoints }) => {
+const mergeEndpointObjects = ({ endpoints, configEndpoints, stateEndpoints }) => {
   return configEndpoints.map(endpoint => {
     const modifiedEndpoint = endpoints.find(e => {
       return e.path === endpoint.path && e.method === endpoint.method
@@ -219,7 +219,7 @@ const validateEndpoint = async ({ apig, apiId, endpoint, state, stage, region })
 
 const validateEndpoints = async ({ apig, apiId, endpoints, state, stage, region }) => {
   const promises = endpoints.reduce((p, endpoint, i) => {
-    const previousObj = state.endpoints ? state.endpoints[i] : {}
+    const previousObj = state.endpoints ? state.endpoints[i] || {} : {}
 
     if (isModified({ obj: endpoint, previousObj })) {
       p.push(validateEndpoint({ apig, apiId, endpoint, state, stage, region }))
@@ -323,6 +323,12 @@ const createMethod = async ({ apig, apiId, endpoint }) => {
   if (endpoint.authorizerId) {
     params.authorizationType = 'CUSTOM'
     params.authorizerId = endpoint.authorizerId
+  }
+
+  if (endpoint.model) {
+    params.requestModels = {
+      'application/json': endpoint.model
+    }
   }
 
   /* create array of strings that exist inside {} in the uri path
@@ -436,6 +442,12 @@ const createMethodResponse = ({ apig, apiId, endpoint }) => {
       resourceId: endpoint.id,
       restApiId: apiId,
       statusCode: `${response.code}`
+    }
+
+    if (response.model) {
+      params.responseModels = {
+        'application/json': response.model
+      }
     }
 
     promises.push(apig.putMethodResponse(params).promise())
@@ -856,8 +868,10 @@ module.exports = {
   createModels,
   createIntegration,
   createIntegrations,
+  createIntegrationResponse,
+  createIntegrationResponses,
   createDeployment,
-  mergeEndpointObject,
+  mergeEndpointObjects,
   mergeModelObjects,
   removeMethod,
   removeMethods,
