@@ -119,6 +119,20 @@ const myEndpoint = (state, endpoint) => {
   return false
 }
 
+const mergeEndpointObject = ({ endpoints, configEndpoints, stateEndpoints }) => {
+  return configEndpoints.map(endpoint => {
+    const modifiedEndpoint = endpoints.find(e => {
+      return e.path === endpoint.path && e.method === endpoint.method
+    })
+
+    const stateEndpoint = modifiedEndpoint || stateEndpoints.find(e => {
+      return e.path === endpoint.path && e.method === endpoint.method
+    })
+
+    return modifiedEndpoint || stateEndpoint
+  })
+}
+
 const isModified = ({ obj, previousObj }) => {
   return !Object.keys(obj).every((prop) => {
     // function or authorizer could be either an arn or function-name so check both
@@ -843,6 +857,7 @@ module.exports = {
   createIntegration,
   createIntegrations,
   createDeployment,
+  mergeEndpointObject,
   mergeModelObjects,
   removeMethod,
   removeMethods,
