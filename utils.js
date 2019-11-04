@@ -71,6 +71,21 @@ const getPathId = async ({ apig, apiId, endpoint }) => {
   return endpointFound ? endpointFound.id : null
 }
 
+const mergeModelObjects = ({ models, configModels, stateModels }) => {
+  return configModels.map(model => {
+    const modifiedModel = models.find(m => {
+      return m.title === model.title
+    })
+
+    // if no modified model is found pull from state
+    const stateModel = modifiedModel || stateModels.find(m => {
+        return m.title === model.title
+      })
+
+    return modifiedModel || stateModel
+  })
+}
+
 const endpointExists = async ({ apig, apiId, endpoint }) => {
   const resourceId = await retry(() => getPathId({ apig, apiId, endpoint }))
 
@@ -102,6 +117,29 @@ const myEndpoint = (state, endpoint) => {
     return true
   }
   return false
+}
+
+const isModified = ({ obj, previousObj }) => {
+  return !Object.keys(obj).every((prop) => {
+    // function or authorizer could be either an arn or function-name so check both
+    if ((prop === 'authorizer' || prop === 'function') && previousObj[prop]) {
+      return obj[prop] === previousObj[prop] || obj[prop] === previousObj[prop].split(':')[6]
+
+    } else if (obj[prop] && previousObj[prop]) {
+      // Recursively check for equality on every key in the obj object
+      const every = (obj, prevObj) => Object.keys(obj).every((key) => {
+        if (typeof obj[key] === 'object' && prevObj[key]) {
+          return every(obj[key], prevObj[key])
+        }
+
+        return obj[key] === prevObj[key]
+      })
+
+      return every(obj[prop], previousObj[prop])
+    }
+
+    return false
+  })
 }
 
 const validateEndpointObject = ({ endpoint, apiId, stage, region }) => {
@@ -166,11 +204,55 @@ const validateEndpoint = async ({ apig, apiId, endpoint, state, stage, region })
 }
 
 const validateEndpoints = async ({ apig, apiId, endpoints, state, stage, region }) => {
-  const promises = []
+  const promises = endpoints.reduce((p, endpoint, i) => {
+    const previousObj = state.endpoints ? state.endpoints[i] : {}
 
-  for (const endpoint of endpoints) {
-    promises.push(validateEndpoint({ apig, apiId, endpoint, state, stage, region }))
+    if (isModified({ obj: endpoint, previousObj })) {
+      p.push(validateEndpoint({ apig, apiId, endpoint, state, stage, region }))
+    }
+
+    return p
+  }, [])
+
+  return Promise.all(promises)
+}
+
+const validateModel = ({ model, models, apiId }) => {
+  if (!model.title) {
+    throw Error('models must have a title')
   }
+
+  const resolveReferences = (m) => Object.keys(m).forEach((key) => {
+    if (typeof m[key] === 'object') {
+      return resolveReferences(m[key])
+    }
+
+    if (key === '$ref') {
+      const ref = models.find(ele => ele.title === m[key])
+      if (ref) {
+        m[key] = `https://apigateway.amazonaws.com/restapis/${apiId}/models/${m[key]}`
+      } else {
+        throw Error('referenced models must be present in the models object')
+      }
+    }
+  })
+
+  resolveReferences(model)
+
+  return model
+}
+
+const validateModels = async ({ apiId, models, state }) => {
+  const promises = models.reduce((m, model, i) => {
+    const previousObj = state.models ? state.models[i] || {} : {}
+
+    if (isModified({ obj: model, previousObj })) {
+      m.push(validateModel({model, models, apiId}))
+    }
+
+    return m
+  }, [])
+
 
   return Promise.all(promises)
 }
@@ -271,6 +353,31 @@ const createMethods = async ({ apig, apiId, endpoints }) => {
   return endpoints
 }
 
+const createModel = async ({ apig, apiId, model }) => {
+  const params = {
+    'contentType': 'application/json',
+    name: model.title,
+    restApiId: apiId,
+    description: model.description || null,
+    schema: JSON.stringify(model, null, '\t')
+  }
+
+  try {
+    await apig.createModel(params).promise()
+  } catch(e) {
+    throw Error(e)
+  }
+}
+
+const createModels = async ({ apig, apiId, models }) => {
+  for (const model of models) {
+    // models must be created one at a time in case they reference eachother
+    await createModel({ apig, apiId, model })
+  }
+
+  return models
+}
+
 const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
   const isLambda = !!endpoint.function
   let functionName, accountId, region
@@ -289,7 +396,7 @@ const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
     integrationHttpMethod: 'POST',
     uri: isLambda
       ? `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${endpoint.function}/invocations`
-      : endpoint.proxyURI
+      : endpoint.URI
   }
 
   try {
@@ -543,10 +650,53 @@ const removeOutdatedEndpoints = async ({ apig, apiId, endpoints, stateEndpoints 
   return outdatedEndpoints
 }
 
+const removeModel = async ({ apig, apiId, model }) => {
+  const params = {
+    modelName: model.title,
+    restApiId: apiId
+  }
+
+  await apig.deleteModel(params).promise()
+
+  return model
+}
+
+const removeModels = async ({ apig, apiId, models }) => {
+  const promises = []
+
+  for (const model of models) {
+    promises.push(removeModel({ apig, apiId, model }))
+  }
+
+  await Promise.all(promises)
+
+  return models
+}
+
+const removeOutdatedModels = async ({ apig, apiId, models, stateModels }) => {
+  const outdatedModels = []
+
+  for (const stateModel of stateModels) {
+    const modelsInUse = models.find(
+      (model) => model.title === stateModel.title
+    )
+
+    if (!modelsInUse) {
+      outdatedModels.push(stateModel)
+    }
+  }
+
+  await removeModels({ apig, apiId, models: outdatedModels })
+
+  return outdatedModels
+}
+
 module.exports = {
   validateEndpointObject,
   validateEndpoint,
   validateEndpoints,
+  validateModel,
+  validateModels,
   endpointExists,
   myEndpoint,
   apiExists,
@@ -558,16 +708,22 @@ module.exports = {
   createPaths,
   createMethod,
   createMethods,
+  createModel,
+  createModels,
   createIntegration,
   createIntegrations,
   createDeployment,
+  mergeModelObjects,
   removeMethod,
   removeMethods,
+  removeModel,
+  removeModels,
   removeResource,
   removeResources,
   removeAuthorizer,
   removeAuthorizers,
   removeApi,
   removeOutdatedEndpoints,
+  removeOutdatedModels,
   retry
 }
