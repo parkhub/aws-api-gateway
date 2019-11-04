@@ -104,6 +104,20 @@ const myEndpoint = (state, endpoint) => {
   return false
 }
 
+const mergeEndpointObject = ({ endpoints, configEndpoints, stateEndpoints }) => {
+  return configEndpoints.map(endpoint => {
+    const modifiedEndpoint = endpoints.find(e => {
+      return e.path === endpoint.path && e.method === endpoint.method
+    })
+
+    const stateEndpoint = modifiedEndpoint || stateEndpoints.find(e => {
+      return e.path === endpoint.path && e.method === endpoint.method
+    })
+
+    return modifiedEndpoint || stateEndpoint
+  })
+}
+
 const isModifiedEndpoint = ({ endpoint, previousEndpoint }) => {
   return !Object.keys(endpoint).every((prop) => {
     // function or authorizer could be either an arn or function-name so check both
@@ -190,9 +204,12 @@ const validateEndpoint = async ({ apig, apiId, endpoint, state, stage, region })
 
 const validateEndpoints = async ({ apig, apiId, endpoints, state, stage, region }) => {
   const promises = endpoints.reduce((p, endpoint, i) => {
-    if (isModifiedEndpoint({ endpoint, previousEndpoint: state.endpoints[i] })) {
+    const previousEndpoint = state.endpoints[i] || {}
+
+    if (isModifiedEndpoint({ endpoint, previousEndpoint })) {
       p.push(validateEndpoint({ apig, apiId, endpoint, state, stage, region }))
     }
+
     return p
   }, [])
 
@@ -585,6 +602,7 @@ module.exports = {
   createIntegration,
   createIntegrations,
   createDeployment,
+  mergeEndpointObject,
   removeMethod,
   removeMethods,
   removeResource,
