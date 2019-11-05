@@ -302,13 +302,46 @@ const createMethod = async ({ apig, apiId, endpoint }) => {
     authorizationType: 'NONE',
     httpMethod: endpoint.method,
     resourceId: endpoint.id,
-    restApiId: apiId,
-    apiKeyRequired: false
+    apiKeyRequired: endpoint.apiKey || true,
+    restApiId: apiId
   }
 
   if (endpoint.authorizerId) {
     params.authorizationType = 'CUSTOM'
     params.authorizerId = endpoint.authorizerId
+  }
+
+  /* create array of strings that exist inside {} in the uri path
+    starts match on } so it will match even if no opening brace */
+  const paths = endpoint.path.match(/[^{\}]+(?=})/g)
+  if (paths && paths.length) {
+    params.requestParameters = {}
+    paths.forEach(path => {
+      const key = `method.request.path.${path}`
+      params.requestParameters[key] = true
+    });
+  }
+
+  // Add headers and querystrings to method
+  if (endpoint.params) {
+    if (!params.requestParameters) params.requestParameters = {}
+    const {headers, querystrings} = endpoint.params
+
+    /* All headers and querystrings passed as static values
+      rather than booleans will not be defined in the method */
+    for (let h in headers) {
+      if (typeof headers[h] === 'boolean') {
+        const key = `method.request.header.${h}`
+        params.requestParameters[key] = headers[h]
+      }
+    }
+
+    for (let qs in querystrings) {
+      if (typeof querystrings[qs] === 'boolean') {
+        const key = `method.request.querystring.${qs}`
+        params.requestParameters[key] = querystrings[qs]
+      }
+    }
   }
 
   try {
@@ -401,6 +434,35 @@ const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
     uri: isLambda
       ? `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${endpoint.function}/invocations`
       : endpoint.URI
+  }
+
+  // create array of strings that exist inside {} in the uri path
+  // starts match on } so it will match even if no opening brace
+  const paths = endpoint.path.match(/[^{\}]+(?=})/g)
+  if (paths && paths.length) {
+    integrationParams.requestParameters = {}
+    paths.forEach(path => {
+      const key = `integration.request.path.${path}`
+      const value = `method.request.path.${path}`
+      integrationParams.requestParameters[key] = value
+    });
+  }
+
+  // Add headers and querystrings to integration
+  if (endpoint.params) {
+    if (!integrationParams.requestParameters) integrationParams.requestParameters = {}
+    const { headers, querystrings } = endpoint.params
+    for (let h in headers) {
+      const key = `integration.request.header.${h}`
+      const value = typeof headers[h] === 'boolean' ? `method.request.header.${h}` : `'${headers[h]}'`
+      integrationParams.requestParameters[key] = value
+    }
+
+    for (let qs in querystrings) {
+      const key = `integration.request.querystring.${qs}`
+      const value = typeof querystrings[qs] === 'boolean' ? `method.request.querystring.${qs}` : `'${querystrings[qs]}'`
+      integrationParams.requestParameters[key] = value
+    }
   }
 
   try {
