@@ -616,6 +616,10 @@ const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
     }
   }
 
+  if (endpoint.template) {
+    integrationParams.requestTemplates = { 'application/json': endpoint.template }
+  }
+
   try {
     await apig.putIntegration(integrationParams).promise()
   } catch (e) {
@@ -679,6 +683,10 @@ const createIntegrationResponse = ({ apig, apiId, endpoint }) => {
       }, {})
 
       : {}
+    }
+
+    if (response.template) {
+      params.responseTemplates = { 'application/json': response.template }
     }
 
     promises.push(apig.putIntegrationResponse(params).promise())
