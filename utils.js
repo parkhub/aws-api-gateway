@@ -71,6 +71,21 @@ const getPathId = async ({ apig, apiId, endpoint }) => {
   return endpointFound ? endpointFound.id : null
 }
 
+const mergeModelObjects = ({ models, configModels, stateModels }) => {
+  return configModels.map(model => {
+    const modifiedModel = models.find(m => {
+      return m.title === model.title
+    })
+
+    // if no modified model is found pull from state
+    const stateModel = modifiedModel || stateModels.find(m => {
+        return m.title === model.title
+      })
+
+    return modifiedModel || stateModel
+  })
+}
+
 const endpointExists = async ({ apig, apiId, endpoint }) => {
   const resourceId = await retry(() => getPathId({ apig, apiId, endpoint }))
 
@@ -102,6 +117,29 @@ const myEndpoint = (state, endpoint) => {
     return true
   }
   return false
+}
+
+const isModified = ({ obj, previousObj }) => {
+  return !Object.keys(obj).every((prop) => {
+    // function or authorizer could be either an arn or function-name so check both
+    if ((prop === 'authorizer' || prop === 'function') && previousObj[prop]) {
+      return obj[prop] === previousObj[prop] || obj[prop] === previousObj[prop].split(':')[6]
+
+    } else if (obj[prop] && previousObj[prop]) {
+      // Recursively check for equality on every key in the obj object
+      const every = (obj, prevObj) => Object.keys(obj).every((key) => {
+        if (typeof obj[key] === 'object' && prevObj[key]) {
+          return every(obj[key], prevObj[key])
+        }
+
+        return obj[key] === prevObj[key]
+      })
+
+      return every(obj[prop], previousObj[prop])
+    }
+
+    return false
+  })
 }
 
 const validateEndpointObject = ({ endpoint, apiId, stage, region }) => {
@@ -166,11 +204,55 @@ const validateEndpoint = async ({ apig, apiId, endpoint, state, stage, region })
 }
 
 const validateEndpoints = async ({ apig, apiId, endpoints, state, stage, region }) => {
-  const promises = []
+  const promises = endpoints.reduce((p, endpoint, i) => {
+    const previousObj = state.endpoints ? state.endpoints[i] : {}
 
-  for (const endpoint of endpoints) {
-    promises.push(validateEndpoint({ apig, apiId, endpoint, state, stage, region }))
+    if (isModified({ obj: endpoint, previousObj })) {
+      p.push(validateEndpoint({ apig, apiId, endpoint, state, stage, region }))
+    }
+
+    return p
+  }, [])
+
+  return Promise.all(promises)
+}
+
+const validateModel = ({ model, models, apiId }) => {
+  if (!model.title) {
+    throw Error('models must have a title')
   }
+
+  const resolveReferences = (m) => Object.keys(m).forEach((key) => {
+    if (typeof m[key] === 'object') {
+      return resolveReferences(m[key])
+    }
+
+    if (key === '$ref') {
+      const ref = models.find(ele => ele.title === m[key])
+      if (ref) {
+        m[key] = `https://apigateway.amazonaws.com/restapis/${apiId}/models/${m[key]}`
+      } else {
+        throw Error('referenced models must be present in the models object')
+      }
+    }
+  })
+
+  resolveReferences(model)
+
+  return model
+}
+
+const validateModels = async ({ apiId, models, state }) => {
+  const promises = models.reduce((m, model, i) => {
+    const previousObj = state.models ? state.models[i] || {} : {}
+
+    if (isModified({ obj: model, previousObj })) {
+      m.push(validateModel({model, models, apiId}))
+    }
+
+    return m
+  }, [])
+
 
   return Promise.all(promises)
 }
@@ -220,13 +302,46 @@ const createMethod = async ({ apig, apiId, endpoint }) => {
     authorizationType: 'NONE',
     httpMethod: endpoint.method,
     resourceId: endpoint.id,
-    restApiId: apiId,
-    apiKeyRequired: false
+    apiKeyRequired: endpoint.apiKey || true,
+    restApiId: apiId
   }
 
   if (endpoint.authorizerId) {
     params.authorizationType = 'CUSTOM'
     params.authorizerId = endpoint.authorizerId
+  }
+
+  /* create array of strings that exist inside {} in the uri path
+    starts match on } so it will match even if no opening brace */
+  const paths = endpoint.path.match(/[^{\}]+(?=})/g)
+  if (paths && paths.length) {
+    params.requestParameters = {}
+    paths.forEach(path => {
+      const key = `method.request.path.${path}`
+      params.requestParameters[key] = true
+    });
+  }
+
+  // Add headers and querystrings to method
+  if (endpoint.params) {
+    if (!params.requestParameters) params.requestParameters = {}
+    const {headers, querystrings} = endpoint.params
+
+    /* All headers and querystrings passed as static values
+      rather than booleans will not be defined in the method */
+    for (let h in headers) {
+      if (typeof headers[h] === 'boolean') {
+        const key = `method.request.header.${h}`
+        params.requestParameters[key] = headers[h]
+      }
+    }
+
+    for (let qs in querystrings) {
+      if (typeof querystrings[qs] === 'boolean') {
+        const key = `method.request.querystring.${qs}`
+        params.requestParameters[key] = querystrings[qs]
+      }
+    }
   }
 
   try {
@@ -300,25 +415,83 @@ const createMethodResponses = async ({ apig, apiId, endpoints }) => {
   return Promise.all(promises).then(() => endpoints)
 }
 
+const createModel = async ({ apig, apiId, model }) => {
+  const params = {
+    'contentType': 'application/json',
+    name: model.title,
+    restApiId: apiId,
+    description: model.description || null,
+    schema: JSON.stringify(model, null, '\t')
+  }
+
+  try {
+    await apig.createModel(params).promise()
+  } catch(e) {
+    throw Error(e)
+  }
+}
+
+const createModels = async ({ apig, apiId, models }) => {
+  for (const model of models) {
+    // models must be created one at a time in case they reference eachother
+    await createModel({ apig, apiId, model })
+  }
+
+  return models
+}
+
 const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
   const isLambda = !!endpoint.function
   let functionName, accountId, region
 
   if (isLambda) {
+    if (endpoint.function.slice(0, 4) !== "arn:") {
+      const func = await lambda.getFunction({ FunctionName: endpoint.authorizer }).promise()
+      endpoint.function = func.Configuration.FunctionArn
+    }
     functionName = endpoint.function.split(':')[6]
     accountId = endpoint.function.split(':')[4]
-    region = endpoint.function.split(':')[3] // todo what if the lambda in another region?
+    region = endpoint.function.split(':')[3]
   }
 
   const integrationParams = {
     httpMethod: endpoint.method,
     resourceId: endpoint.id,
     restApiId: apiId,
-    type: isLambda ? 'AWS_PROXY' : 'HTTP_PROXY',
+    type: isLambda ? 'AWS_PROXY' : 'HTTP',
     integrationHttpMethod: 'POST',
     uri: isLambda
       ? `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${endpoint.function}/invocations`
-      : endpoint.proxyURI
+      : endpoint.URI
+  }
+
+  // create array of strings that exist inside {} in the uri path
+  // starts match on } so it will match even if no opening brace
+  const paths = endpoint.path.match(/[^{\}]+(?=})/g)
+  if (paths && paths.length) {
+    integrationParams.requestParameters = {}
+    paths.forEach(path => {
+      const key = `integration.request.path.${path}`
+      const value = `method.request.path.${path}`
+      integrationParams.requestParameters[key] = value
+    });
+  }
+
+  // Add headers and querystrings to integration
+  if (endpoint.params) {
+    if (!integrationParams.requestParameters) integrationParams.requestParameters = {}
+    const { headers, querystrings } = endpoint.params
+    for (let h in headers) {
+      const key = `integration.request.header.${h}`
+      const value = typeof headers[h] === 'boolean' ? `method.request.header.${h}` : `'${headers[h]}'`
+      integrationParams.requestParameters[key] = value
+    }
+
+    for (let qs in querystrings) {
+      const key = `integration.request.querystring.${qs}`
+      const value = typeof querystrings[qs] === 'boolean' ? `method.request.querystring.${qs}` : `'${querystrings[qs]}'`
+      integrationParams.requestParameters[key] = value
+    }
   }
 
   try {
@@ -484,6 +657,10 @@ const removeApi = async ({ apig, apiId }) => {
 
 const createAuthorizer = async ({ apig, lambda, apiId, endpoint }) => {
   if (endpoint.authorizer) {
+    if (endpoint.authorizer.slice(0,4) !== "arn:") {
+      const func = await lambda.getFunction({FunctionName: endpoint.authorizer}).promise()
+      endpoint.authorizer = func.Configuration.FunctionArn
+    }
     const authorizerName = endpoint.authorizer.split(':')[6]
     const region = endpoint.authorizer.split(':')[3]
     const accountId = endpoint.authorizer.split(':')[4]
@@ -601,10 +778,53 @@ const removeOutdatedEndpoints = async ({ apig, apiId, endpoints, stateEndpoints 
   return outdatedEndpoints
 }
 
+const removeModel = async ({ apig, apiId, model }) => {
+  const params = {
+    modelName: model.title,
+    restApiId: apiId
+  }
+
+  await apig.deleteModel(params).promise()
+
+  return model
+}
+
+const removeModels = async ({ apig, apiId, models }) => {
+  const promises = []
+
+  for (const model of models) {
+    promises.push(removeModel({ apig, apiId, model }))
+  }
+
+  await Promise.all(promises)
+
+  return models
+}
+
+const removeOutdatedModels = async ({ apig, apiId, models, stateModels }) => {
+  const outdatedModels = []
+
+  for (const stateModel of stateModels) {
+    const modelsInUse = models.find(
+      (model) => model.title === stateModel.title
+    )
+
+    if (!modelsInUse) {
+      outdatedModels.push(stateModel)
+    }
+  }
+
+  await removeModels({ apig, apiId, models: outdatedModels })
+
+  return outdatedModels
+}
+
 module.exports = {
   validateEndpointObject,
   validateEndpoint,
   validateEndpoints,
+  validateModel,
+  validateModels,
   endpointExists,
   myEndpoint,
   apiExists,
@@ -616,16 +836,24 @@ module.exports = {
   createPaths,
   createMethod,
   createMethods,
+  createModel,
+  createModels,
   createIntegration,
   createIntegrations,
+  createMethodResponse,
+  createMethodResponses,
   createDeployment,
+  mergeModelObjects,
   removeMethod,
   removeMethods,
+  removeModel,
+  removeModels,
   removeResource,
   removeResources,
   removeAuthorizer,
   removeAuthorizers,
   removeApi,
   removeOutdatedEndpoints,
+  removeOutdatedModels,
   retry
 }

@@ -5,18 +5,22 @@ const {
   apiExists,
   createApi,
   validateEndpoints,
+  validateModels,
   createAuthorizers,
   createPaths,
   createMethods,
   createMethodResponses,
+  createModels,
   createIntegrations,
   createIntegrationResponses,
   createDeployment,
+  mergeModelObjects,
   removeApi,
   removeMethods,
   removeAuthorizers,
   removeResources,
   removeOutdatedEndpoints,
+  removeOutdatedModels,
   retry
 } = require('./utils')
 
@@ -75,6 +79,14 @@ class AwsApiGateway extends Component {
       region
     })
 
+    this.context.debug(`Validating models provided for API ID ${apiId}`)
+
+    let models = await validateModels({ models: config.models || [], state: this.state, apiId })
+
+    this.context.debug(`Deploying models for API ID ${apiId}`)
+
+    models = await createModels({ apig, apiId, models })
+
     this.context.debug(`Deploying authorizers if any for API ID ${apiId}.`)
 
     endpoints = await createAuthorizers({ apig, lambda, apiId, endpoints })
@@ -103,6 +115,20 @@ class AwsApiGateway extends Component {
     this.context.debug(`Creating integration responses for API ID ${apiId}.`)
 
     endpoints = await createIntegrationResponses({apig, apiId, endpoints})
+    this.context.debug(`Removing any old models for API ID ${apiId}`)
+
+    models = mergeModelObjects({
+      models,
+      configModels: config.models || [],
+      stateModels: this.state.models || []
+    })
+
+    await removeOutdatedModels({
+      apig,
+      apiId,
+      models,
+      stateModels: this.state.models || []
+    })
 
     this.context.debug(`Removing any old endpoints for API ID ${apiId}.`)
 
@@ -123,6 +149,7 @@ class AwsApiGateway extends Component {
     config.url = `https://${apiId}.execute-api.${region}.amazonaws.com/${stage}`
 
     this.state.endpoints = endpoints
+    this.state.models = models
     this.state.name = config.name
     this.state.region = config.region
     this.state.stage = config.stage
