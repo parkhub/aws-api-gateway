@@ -1,12 +1,12 @@
 {
-  "name": "@serverless/aws-api-gateway",
-  "version": "4.0.0",
+  "name": "@parkhub/aws-api-gateway",
+  "version": "0.9.3",
   "main": "./serverless.js",
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "echo \"No test specified\"",
     "lint": "eslint . --fix --cache"
   },
   "author": "Serverless, Inc.",
