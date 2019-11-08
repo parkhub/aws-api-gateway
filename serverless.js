@@ -9,8 +9,10 @@ const {
   createAuthorizers,
   createPaths,
   createMethods,
+  createMethodResponses,
   createModels,
   createIntegrations,
+  createIntegrationResponses,
   createDeployment,
   mergeModelObjects,
   removeApi,
@@ -106,6 +108,13 @@ class AwsApiGateway extends Component {
 
     endpoints = await createIntegrations({ apig, lambda, apiId, endpoints })
 
+    this.context.debug(`Creating method responses for API ID ${apiId}.`)
+
+    endpoints = await createMethodResponses({ apig, apiId, endpoints })
+
+    this.context.debug(`Creating integration responses for API ID ${apiId}.`)
+
+    endpoints = await createIntegrationResponses({apig, apiId, endpoints})
     this.context.debug(`Removing any old models for API ID ${apiId}`)
 
     models = mergeModelObjects({

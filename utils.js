@@ -386,6 +386,35 @@ const createMethods = async ({ apig, apiId, endpoints }) => {
   return endpoints
 }
 
+const createMethodResponse = ({ apig, apiId, endpoint }) => {
+  const promises = []
+
+  if (!endpoint.responses) return []
+
+  for (const response of endpoint.responses) {
+    const params = {
+      httpMethod: endpoint.method,
+      resourceId: endpoint.id,
+      restApiId: apiId,
+      statusCode: `${response.code}`
+    }
+
+    promises.push(apig.putMethodResponse(params).promise())
+  }
+
+  return promises
+}
+
+const createMethodResponses = async ({ apig, apiId, endpoints }) => {
+  const promises = []
+
+  for (const endpoint of endpoints) {
+    promises.push(...createMethodResponse({apig, apiId, endpoint}))
+  }
+
+  return Promise.all(promises).then(() => endpoints)
+}
+
 const createModel = async ({ apig, apiId, model }) => {
   const params = {
     'contentType': 'application/json',
@@ -508,6 +537,35 @@ const createIntegrations = async ({ apig, lambda, apiId, endpoints }) => {
   }
 
   return Promise.all(promises)
+}
+
+const createIntegrationResponse = ({ apig, apiId, endpoint }) => {
+  const promises = []
+  if (!endpoint.responses) return []
+
+  for (const response of endpoint.responses) {
+    const params = {
+      httpMethod: endpoint.method,
+      resourceId: endpoint.id,
+      restApiId: apiId,
+      statusCode: `${response.code}`,
+      selectionPattern: `${response.code}`,
+    }
+
+    promises.push(apig.putIntegrationResponse(params).promise())
+  }
+
+  return promises
+}
+
+const createIntegrationResponses = async ({ apig, apiId, endpoints }) => {
+  const promises = []
+
+  for (const endpoint of endpoints) {
+    promises.push(...createIntegrationResponse({ apig, apiId, endpoint }))
+  }
+
+  return Promise.all(promises).then(() => endpoints)
 }
 
 const createDeployment = async ({ apig, apiId, stage }) => {
@@ -782,6 +840,8 @@ module.exports = {
   createModels,
   createIntegration,
   createIntegrations,
+  createMethodResponse,
+  createMethodResponses,
   createDeployment,
   mergeModelObjects,
   removeMethod,
