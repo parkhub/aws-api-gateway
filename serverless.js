@@ -14,6 +14,7 @@ const {
   createIntegrations,
   createIntegrationResponses,
   createDeployment,
+  mergeEndpointObjects,
   mergeModelObjects,
   removeApi,
   removeMethods,
@@ -131,6 +132,12 @@ class AwsApiGateway extends Component {
     })
 
     this.context.debug(`Removing any old endpoints for API ID ${apiId}.`)
+
+    endpoints = mergeEndpointObjects({
+      endpoints,
+      configEndpoints: config.endpoints,
+      stateEndpoints: state.endpoints
+    })
 
     // keep endpoints in sync with provider
     await removeOutdatedEndpoints({
