@@ -23,7 +23,8 @@ const {
   removeResources,
   removeOutdatedEndpoints,
   removeOutdatedModels,
-  retry
+  retry,
+  updateApi
 } = require('./utils')
 
 const defaults = {
@@ -39,9 +40,9 @@ class AwsApiGateway extends Component {
 
     const config = { ...defaults, ...inputs }
 
-    config.name = this.state.name || this.context.resourceId()
+    config.name = this.state.name || config.name || this.context.resourceId()
 
-    const { name, description, region, stage, endpointTypes } = config
+    const { name, description, region, stage, endpointTypes, deploymentDescription } = config
 
     this.context.debug(`Starting API Gateway deployment with name ${name} in the ${region} region`)
 
@@ -62,7 +63,7 @@ class AwsApiGateway extends Component {
 
     if (!apiId) {
       this.context.debug(`API ID not found in state. Creating a new API.`)
-      apiId = await createApi({ apig, name, description, endpointTypes })
+      apiId = await createApi({ apig, name, description, endpointTypes, config })
       this.context.debug(`API with ID ${apiId} created.`)
       this.state.id = apiId
       await this.save()
@@ -75,6 +76,9 @@ class AwsApiGateway extends Component {
 
       config.endpoints = enableCORS({ endpoints: config.endpoints })
     }
+
+    this.context.debug(`Update API Settings for API ID ${apiId}.`)
+    apiId = await updateApi({ apig, apiId, name, description, endpointTypes, config, state: this.state })
 
     this.context.debug(`Validating ownership for the provided endpoints for API ID ${apiId}.`)
 
@@ -160,7 +164,7 @@ class AwsApiGateway extends Component {
       `Creating deployment for API ID ${apiId} in the ${stage} stage and the ${region} region.`
     )
 
-    await retry(() => createDeployment({ apig, apiId, stage }))
+    await retry(() => createDeployment({ apig, apiId, stage, deploymentDescription }))
 
     config.url = `https://${apiId}.execute-api.${region}.amazonaws.com/${stage}`
 

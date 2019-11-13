@@ -35,16 +35,59 @@ const apiExists = async ({ apig, apiId }) => {
   }
 }
 
-const createApi = async ({ apig, name, description, endpointTypes }) => {
+const createApi = async ({ apig, name, description, endpointTypes, config: { minimumCompressionSize, binaryMediaTypes }}) => {
   const api = await apig
     .createRestApi({
       name,
       description,
       endpointConfiguration: {
         types: endpointTypes
-      }
+      },
+      minimumCompressionSize,
+      binaryMediaTypes
     })
     .promise()
+
+  return api.id
+}
+
+const updateApi = async({
+  apig,
+  apiId,
+  description,
+  endpointTypes,
+  name,
+  config: { minimumCompressionSize, binaryMediaTypes },
+  state: { stateMediaTypes }
+}) => {
+  const ops = []
+  const op = {
+    op: 'replace',
+    path: '',
+    value: ''
+  }
+
+  ops.push(Object.assign({}, op, { path: '/description', value: description }))
+  ops.push(Object.assign({}, op, { path: '/endpointConfiguration/types/{type}', value: endpointTypes[0] }))
+  ops.push(Object.assign({}, op, { path: '/name', value: name }))
+  ops.push(Object.assign({}, op, { path: '/minimumCompressionSize', value: JSON.stringify(minimumCompressionSize) || null }))
+
+  console.log(stateMediaTypes)
+  for (type of stateMediaTypes || []) {
+    ops.push({ op: "remove", path: `/binaryMediaTypes/${type.replace(/\//gi, '~1')}`, value: type.replace(/\//gi, '~1') })
+  }
+
+  console.log(binaryMediaTypes)
+  for (type of binaryMediaTypes || []) {
+    ops.push({ op: 'replace', path: `/binaryMediaTypes/${type.replace(/\//gi, '~1')}`, value: type.replace(/\//gi, '~1') })
+  }
+  console.log(ops)
+
+  const api = await apig
+    .updateRestApi({
+      restApiId: apiId,
+      patchOperations: ops
+    }).promise()
 
   return api.id
 }
@@ -473,38 +516,6 @@ const createMethods = async ({ apig, apiId, endpoints }) => {
   return endpoints
 }
 
-const createModel = async ({ apig, apiId, model }) => {
-  const params = {
-    'contentType': 'application/json',
-    name: model.title,
-    restApiId: apiId,
-    description: model.description || null,
-    schema: JSON.stringify(model, null, '\t')
-  }
-
-  try {
-    await apig.createModel(params).promise()
-  } catch(e) {
-    throw Error(e)
-  }
-}
-
-const createModels = async ({ apig, apiId, models }) => {
-  for (const model of models) {
-    // models must be created one at a time in case they reference eachother
-    try {
-      await createModel({ apig, apiId, model })
-    } catch (e) {
-      if (e.message.match(/ConflictException/)) {
-      } else {
-        throw e
-      }
-    }
-  }
-
-  return models
-}
-
 const createMethodResponse = ({ apig, apiId, endpoint }) => {
   const promises = []
 
@@ -558,6 +569,42 @@ const createMethodResponses = async ({ apig, apiId, endpoints }) => {
   return Promise.all(promises).then(() => endpoints)
 }
 
+const createModel = async ({ apig, apiId, model }) => {
+  const params = {
+    'contentType': 'application/json',
+    name: model.title,
+    restApiId: apiId,
+    description: model.description || null,
+    schema: JSON.stringify(model, null, '\t')
+  }
+
+  try {
+    await apig.createModel(params).promise()
+  } catch(e) {
+    if (e.code === 'ConflictException') {
+      await apig.updateModel({
+        name: model.title,
+        restApiId: apiId,
+        patchOperations: [
+          { op: 'replace', path: '/description', value: params.description },
+          { op: 'replace', path: '/schema', value: params.schema }
+        ]
+      })
+    } else {
+      throw Error(e)
+    }
+  }
+}
+
+const createModels = async ({ apig, apiId, models }) => {
+  for (const model of models) {
+    // models must be created one at a time in case they reference eachother
+    await createModel({ apig, apiId, model })
+  }
+
+  return models
+}
+
 const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
   const isLambda = !!endpoint.function
   let functionName, accountId, region
@@ -585,6 +632,35 @@ const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
       : endpoint.URI
 
     integrationParams.integrationHttpMethod = endpoint.method
+  }
+
+  // create array of strings that exist inside {} in the uri path
+  // starts match on } so it will match even if no opening brace
+  const paths = endpoint.path.match(/[^{\}]+(?=})/g)
+  if (paths && paths.length) {
+    integrationParams.requestParameters = {}
+    paths.forEach(path => {
+      const key = `integration.request.path.${path}`
+      const value = `method.request.path.${path}`
+      integrationParams.requestParameters[key] = value
+    });
+  }
+
+  // Add headers and querystrings to integration
+  if (endpoint.params) {
+    if (!integrationParams.requestParameters) integrationParams.requestParameters = {}
+    const { headers, querystrings } = endpoint.params
+    for (let h in headers) {
+      const key = `integration.request.header.${h}`
+      const value = typeof headers[h] === 'boolean' ? `method.request.header.${h}` : `'${headers[h]}'`
+      integrationParams.requestParameters[key] = value
+    }
+
+    for (let qs in querystrings) {
+      const key = `integration.request.querystring.${qs}`
+      const value = typeof querystrings[qs] === 'boolean' ? `method.request.querystring.${qs}` : `'${querystrings[qs]}'`
+      integrationParams.requestParameters[key] = value
+    }
   }
 
   // create array of strings that exist inside {} in the uri path
@@ -697,8 +773,8 @@ const createIntegrationResponses = async ({ apig, apiId, endpoints }) => {
   return Promise.all(promises).then(() => endpoints)
 }
 
-const createDeployment = async ({ apig, apiId, stage }) => {
-  const deployment = await apig.createDeployment({ restApiId: apiId, stageName: stage }).promise()
+const createDeployment = async ({ apig, apiId, stage, deploymentDescription }) => {
+  const deployment = await apig.createDeployment({ restApiId: apiId, stageName: stage, description: deploymentDescription }).promise()
 
   // todo add update stage functionality
 
@@ -961,19 +1037,19 @@ module.exports = {
   getPathId,
   createAuthorizer,
   createAuthorizers,
-  createPath,
-  createPaths,
+  createDeployment,
+  createIntegration,
+  createIntegrations,
+  createIntegrationResponse,
+  createIntegrationResponses,
   createMethod,
   createMethods,
   createMethodResponse,
   createMethodResponses,
   createModel,
   createModels,
-  createIntegration,
-  createIntegrations,
-  createIntegrationResponse,
-  createIntegrationResponses,
-  createDeployment,
+  createPath,
+  createPaths,
   enableCORS,
   mergeEndpointObjects,
   mergeModelObjects,
@@ -988,5 +1064,6 @@ module.exports = {
   removeApi,
   removeOutdatedEndpoints,
   removeOutdatedModels,
-  retry
+  retry,
+  updateApi
 }
