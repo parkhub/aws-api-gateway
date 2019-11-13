@@ -114,6 +114,46 @@ const getPathId = async ({ apig, apiId, endpoint }) => {
   return endpointFound ? endpointFound.id : null
 }
 
+const enableCORS = ({ endpoints }) => {
+  const defaultResponse = [{
+    code: 200,
+    headers: {
+      "Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+      "Access-Control-Allow-Methods": "'GET,OPTIONS,POST,PUT,PATCH,DELETE'",
+      "Access-Control-Allow-Origin": "'*'"
+    }
+  }]
+
+  const paths = new Set()
+  for (endpoint of endpoints) {
+    // if the path has not already been configured
+    if (!paths.has(endpoint.path)) {
+      paths.add(endpoint.path)
+
+      // append options resource
+      const optionParams = {
+        method: "OPTIONS",
+        type: "MOCK",
+        responses: defaultResponse,
+        path: endpoint.path
+      }
+      endpoints.push(optionParams)
+    }
+
+    if (endpoint.responses && endpoint.responses.length) {
+      const newResponses = []
+      for (response of endpoint.responses) {
+        newResponses.push(Object.assign({ headers: defaultResponse[0].headers }, response))
+      }
+      endpoint.responses = newResponses
+    } else {
+      endpoint.responses = defaultResponse
+    }
+  }
+
+  return endpoints
+}
+
 const mergeModelObjects = ({ models, configModels, stateModels }) => {
   return configModels.map(model => {
     const modifiedModel = models.find(m => {
@@ -176,27 +216,46 @@ const mergeEndpointObjects = ({ endpoints, configEndpoints, stateEndpoints }) =>
   })
 }
 
-const isModified = ({ obj, previousObj }) => {
-  return !Object.keys(obj).every((prop) => {
-    // function or authorizer could be either an arn or function-name so check both
-    if ((prop === 'authorizer' || prop === 'function') && previousObj[prop]) {
-      return obj[prop] === previousObj[prop] || obj[prop] === previousObj[prop].split(':')[6]
+const compareProps = ({ obj, previousObj }) => {
+  // Both arrays and objects must have the same number of keys and each key be equal
+  if (Array.isArray(obj) && previousObj) {
+    return obj.length === previousObj.length
+      && obj.every((key, i) => compareProps({ obj: key, previousObj: previousObj[i] }))
+  }
 
-    } else if (obj[prop] && previousObj[prop]) {
-      // Recursively check for equality on every key in the obj object
-      const every = (obj, prevObj) => Object.keys(obj).every((key) => {
-        if (typeof obj[key] === 'object' && prevObj[key]) {
-          return every(obj[key], prevObj[key])
-        }
+  if (typeof obj === 'object' && previousObj) {
+    const objKeys = Object.keys(obj)
+    const previousObjKeys = Object.keys(previousObj)
 
-        return obj[key] === prevObj[key]
-      })
+    return objKeys.length === previousObjKeys.length
+      && objKeys.every((key) => compareProps({ obj: obj[key], previousObj: previousObj[key] }))
+  }
 
-      return every(obj[prop], previousObj[prop])
-    }
+  return obj === previousObj
+}
 
-    return false
-  })
+const isModified = async ({ obj, previousObj, lambda }) => {
+  // Set authorizer and function values to arns if they are not
+  if (obj.function && obj.function.slice(0, 4) !== "arn:") {
+    const fxn = await lambda.getFunction({ FunctionName: obj.function }).promise()
+    obj.function = fxn.Configuration.FunctionArn
+  }
+
+  if (obj.authorizer && obj.authorizer.slice(0, 4) !== "arn:") {
+    const fxn = await lambda.getFunction({ FunctionName: obj.authorizer }).promise()
+    obj.authorizer = fxn.Configuration.FunctionArn
+  }
+
+  // Remove fields in endpoint state that won't be in the config, allowing for comparison
+  let previousCopy
+  if (previousObj && previousObj.path && previousObj.method) {
+    previousCopy = Object.assign({}, previousObj)
+    delete previousCopy.authorizerId
+    delete previousCopy.url
+    delete previousCopy.id
+  }
+
+  return !compareProps({obj, previousCopy})
 }
 
 const validateEndpointObject = ({ endpoint, apiId, stage, region }) => {
@@ -260,16 +319,24 @@ const validateEndpoint = async ({ apig, apiId, endpoint, state, stage, region })
   return validatedEndpoint
 }
 
-const validateEndpoints = async ({ apig, apiId, endpoints, state, stage, region }) => {
-  const promises = endpoints.reduce((p, endpoint, i) => {
-    const previousObj = state.endpoints ? state.endpoints[i] || {} : {}
+const validateEndpoints = async ({ apig, apiId, endpoints, lambda, state, stage, region }) => {
+  const modifiedEndpoints = []
+  for (i = 0; i < endpoints.length; i++) {
+    const modified = await isModified({
+      obj: endpoints[i],
+      previousObj: state.endpoints ? state.endpoints[i] : null,
+      lambda
+    })
 
-    if (isModified({ obj: endpoint, previousObj })) {
-      p.push(validateEndpoint({ apig, apiId, endpoint, state, stage, region }))
+    if (modified) {
+      modifiedEndpoints.push(endpoints[i])
     }
+  }
 
-    return p
-  }, [])
+  const promises = []
+  for (endpoint of modifiedEndpoints) {
+    promises.push(validateEndpoint({ apig, apiId, endpoint, state, stage, region }))
+  }
 
   return Promise.all(promises)
 }
@@ -449,51 +516,44 @@ const createMethods = async ({ apig, apiId, endpoints }) => {
   return endpoints
 }
 
-const createModel = async ({ apig, apiId, model }) => {
-  const params = {
-    'contentType': 'application/json',
-    name: model.title,
-    restApiId: apiId,
-    description: model.description || null,
-    schema: JSON.stringify(model, null, '\t')
-  }
-
-  try {
-    await apig.createModel(params).promise()
-  } catch(e) {
-    throw Error(e)
-  }
-}
-
-const createModels = async ({ apig, apiId, models }) => {
-  for (const model of models) {
-    // models must be created one at a time in case they reference eachother
-    await createModel({ apig, apiId, model })
-  }
-
-  return models
-}
-
 const createMethodResponse = ({ apig, apiId, endpoint }) => {
   const promises = []
 
-  if (!endpoint.responses) return []
-
-  for (const response of endpoint.responses) {
+  for (const response of (endpoint.responses || [])) {
     const params = {
       httpMethod: endpoint.method,
       resourceId: endpoint.id,
       restApiId: apiId,
-      statusCode: `${response.code}`
+      statusCode: `${response.code}`,
+      responseModels: {
+        'application/json': response.model || 'Empty'
+      },
+      responseParameters: response.headers ? Object.keys(response.headers).reduce((res, ele) => {
+        res[`method.response.header.${ele}`] = false
+        return res
+      }, {})
+      : {}
     }
 
-    if (response.model) {
-      params.responseModels = {
-        'application/json': response.model
-      }
-    }
+    const p = apig.putMethodResponse(params).promise()
+      .catch(e => {
+        if (e.code === 'ConflictException') {
+          const params = {
+            httpMethod: endpoint.method,
+            resourceId: endpoint.id,
+            restApiId: apiId,
+            statusCode: `${response.code}`,
+            patchOperations:[{
+              op: 'replace',
+              path: '/responseParameters'
+            }]
+          }
+          return apig.updateMethodResponse(params)
+        }
+        throw e
+      })
 
-    promises.push(apig.putMethodResponse(params).promise())
+    promises.push(p)
   }
 
   return promises
@@ -560,14 +620,47 @@ const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
   }
 
   const integrationParams = {
-    httpMethod: endpoint.method,
+    httpMethod: endpoint.method || 'POST',
     resourceId: endpoint.id,
     restApiId: apiId,
-    type: isLambda ? 'AWS_PROXY' : 'HTTP',
-    integrationHttpMethod: 'POST',
-    uri: isLambda
+    type: endpoint.type || (isLambda ? 'AWS_PROXY' : 'HTTP')
+  }
+
+  if (endpoint.type !== 'MOCK') {
+    integrationParams.uri = isLambda
       ? `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${endpoint.function}/invocations`
       : endpoint.URI
+
+    integrationParams.integrationHttpMethod = endpoint.method
+  }
+
+  // create array of strings that exist inside {} in the uri path
+  // starts match on } so it will match even if no opening brace
+  const paths = endpoint.path.match(/[^{\}]+(?=})/g)
+  if (paths && paths.length) {
+    integrationParams.requestParameters = {}
+    paths.forEach(path => {
+      const key = `integration.request.path.${path}`
+      const value = `method.request.path.${path}`
+      integrationParams.requestParameters[key] = value
+    });
+  }
+
+  // Add headers and querystrings to integration
+  if (endpoint.params) {
+    if (!integrationParams.requestParameters) integrationParams.requestParameters = {}
+    const { headers, querystrings } = endpoint.params
+    for (let h in headers) {
+      const key = `integration.request.header.${h}`
+      const value = typeof headers[h] === 'boolean' ? `method.request.header.${h}` : `'${headers[h]}'`
+      integrationParams.requestParameters[key] = value
+    }
+
+    for (let qs in querystrings) {
+      const key = `integration.request.querystring.${qs}`
+      const value = typeof querystrings[qs] === 'boolean' ? `method.request.querystring.${qs}` : `'${querystrings[qs]}'`
+      integrationParams.requestParameters[key] = value
+    }
   }
 
   // create array of strings that exist inside {} in the uri path
@@ -655,6 +748,13 @@ const createIntegrationResponse = ({ apig, apiId, endpoint }) => {
       restApiId: apiId,
       statusCode: `${response.code}`,
       selectionPattern: `${response.code}`,
+      responseParameters: response.headers
+      ? Object.keys(response.headers).reduce((res, ele) => {
+        res[`method.response.header.${ele}`] = response.headers[ele]
+        return res
+      }, {})
+
+      : {}
     }
 
     promises.push(apig.putIntegrationResponse(params).promise())
@@ -937,21 +1037,20 @@ module.exports = {
   getPathId,
   createAuthorizer,
   createAuthorizers,
-  createPath,
-  createPaths,
-  createMethod,
-  createMethods,
-  createModel,
-  createModels,
+  createDeployment,
   createIntegration,
   createIntegrations,
   createIntegrationResponse,
   createIntegrationResponses,
+  createMethod,
+  createMethods,
   createMethodResponse,
   createMethodResponses,
-  createIntegrationResponse,
-  createIntegrationResponses,
-  createDeployment,
+  createModel,
+  createModels,
+  createPath,
+  createPaths,
+  enableCORS,
   mergeEndpointObjects,
   mergeModelObjects,
   removeMethod,

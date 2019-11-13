@@ -14,7 +14,8 @@ const {
   createIntegrations,
   createIntegrationResponses,
   createDeployment,
-  mergeEndpointObject,
+  enableCORS,
+  mergeEndpointObjects,
   mergeModelObjects,
   removeApi,
   removeMethods,
@@ -70,6 +71,12 @@ class AwsApiGateway extends Component {
       throw Error(`the specified api id "${apiId}" does not exist`)
     }
 
+    if (config.cors) {
+      this.context.debug(`Append options and add cors headers to configured endpoints for API ID ${apiId}`)
+
+      config.endpoints = enableCORS({ endpoints: config.endpoints })
+    }
+
     this.context.debug(`Update API Settings for API ID ${apiId}.`)
     apiId = await updateApi({ apig, apiId, name, description, endpointTypes, config, state: this.state })
 
@@ -79,6 +86,7 @@ class AwsApiGateway extends Component {
       apig,
       apiId,
       endpoints: config.endpoints,
+      lambda,
       state: this.state,
       stage,
       region
@@ -138,7 +146,7 @@ class AwsApiGateway extends Component {
 
     this.context.debug(`Removing any old endpoints for API ID ${apiId}.`)
 
-    endpoints = mergeEndpointObject({
+    endpoints = mergeEndpointObjects({
       endpoints,
       configEndpoints: config.endpoints,
       stateEndpoints: this.state.endpoints || []
