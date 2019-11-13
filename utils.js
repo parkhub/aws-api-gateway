@@ -35,16 +35,59 @@ const apiExists = async ({ apig, apiId }) => {
   }
 }
 
-const createApi = async ({ apig, name, description, endpointTypes }) => {
+const createApi = async ({ apig, name, description, endpointTypes, config: { minimumCompressionSize, binaryMediaTypes }}) => {
   const api = await apig
     .createRestApi({
       name,
       description,
       endpointConfiguration: {
         types: endpointTypes
-      }
+      },
+      minimumCompressionSize,
+      binaryMediaTypes
     })
     .promise()
+
+  return api.id
+}
+
+const updateApi = async({
+  apig,
+  apiId,
+  description,
+  endpointTypes,
+  name,
+  config: { minimumCompressionSize, binaryMediaTypes },
+  state: { stateMediaTypes }
+}) => {
+  const ops = []
+  const op = {
+    op: 'replace',
+    path: '',
+    value: ''
+  }
+
+  ops.push(Object.assign({}, op, { path: '/description', value: description }))
+  ops.push(Object.assign({}, op, { path: '/endpointConfiguration/types/{type}', value: endpointTypes[0] }))
+  ops.push(Object.assign({}, op, { path: '/name', value: name }))
+  ops.push(Object.assign({}, op, { path: '/minimumCompressionSize', value: JSON.stringify(minimumCompressionSize) || null }))
+
+  console.log(stateMediaTypes)
+  for (type of stateMediaTypes || []) {
+    ops.push({ op: "remove", path: `/binaryMediaTypes/${type.replace(/\//gi, '~1')}`, value: type.replace(/\//gi, '~1') })
+  }
+
+  console.log(binaryMediaTypes)
+  for (type of binaryMediaTypes || []) {
+    ops.push({ op: 'replace', path: `/binaryMediaTypes/${type.replace(/\//gi, '~1')}`, value: type.replace(/\//gi, '~1') })
+  }
+  console.log(ops)
+
+  const api = await apig
+    .updateRestApi({
+      restApiId: apiId,
+      patchOperations: ops
+    }).promise()
 
   return api.id
 }
@@ -466,6 +509,42 @@ const createMethodResponses = async ({ apig, apiId, endpoints }) => {
   return Promise.all(promises).then(() => endpoints)
 }
 
+const createModel = async ({ apig, apiId, model }) => {
+  const params = {
+    'contentType': 'application/json',
+    name: model.title,
+    restApiId: apiId,
+    description: model.description || null,
+    schema: JSON.stringify(model, null, '\t')
+  }
+
+  try {
+    await apig.createModel(params).promise()
+  } catch(e) {
+    if (e.code === 'ConflictException') {
+      await apig.updateModel({
+        name: model.title,
+        restApiId: apiId,
+        patchOperations: [
+          { op: 'replace', path: '/description', value: params.description },
+          { op: 'replace', path: '/schema', value: params.schema }
+        ]
+      })
+    } else {
+      throw Error(e)
+    }
+  }
+}
+
+const createModels = async ({ apig, apiId, models }) => {
+  for (const model of models) {
+    // models must be created one at a time in case they reference eachother
+    await createModel({ apig, apiId, model })
+  }
+
+  return models
+}
+
 const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
   const isLambda = !!endpoint.function
   let functionName, accountId, region
@@ -594,8 +673,8 @@ const createIntegrationResponses = async ({ apig, apiId, endpoints }) => {
   return Promise.all(promises).then(() => endpoints)
 }
 
-const createDeployment = async ({ apig, apiId, stage }) => {
-  const deployment = await apig.createDeployment({ restApiId: apiId, stageName: stage }).promise()
+const createDeployment = async ({ apig, apiId, stage, deploymentDescription }) => {
+  const deployment = await apig.createDeployment({ restApiId: apiId, stageName: stage, description: deploymentDescription }).promise()
 
   // todo add update stage functionality
 
@@ -870,6 +949,8 @@ module.exports = {
   createIntegrationResponses,
   createMethodResponse,
   createMethodResponses,
+  createIntegrationResponse,
+  createIntegrationResponses,
   createDeployment,
   mergeEndpointObjects,
   mergeModelObjects,
@@ -884,5 +965,6 @@ module.exports = {
   removeApi,
   removeOutdatedEndpoints,
   removeOutdatedModels,
-  retry
+  retry,
+  updateApi
 }
