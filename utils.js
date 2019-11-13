@@ -663,6 +663,9 @@ const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
     }
   }
 
+  if (endpoint.template) {
+    integrationParams.requestTemplates = { 'application/json': endpoint.template }
+  }
   // create array of strings that exist inside {} in the uri path
   // starts match on } so it will match even if no opening brace
   const paths = endpoint.path.match(/[^{\}]+(?=})/g)
@@ -755,6 +758,10 @@ const createIntegrationResponse = ({ apig, apiId, endpoint }) => {
       }, {})
 
       : {}
+    }
+
+    if (response.template) {
+      params.responseTemplates = { 'application/json': response.template }
     }
 
     promises.push(apig.putIntegrationResponse(params).promise())
