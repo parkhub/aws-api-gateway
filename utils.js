@@ -162,7 +162,7 @@ const myEndpoint = (state, endpoint) => {
   return false
 }
 
-const mergeEndpointObject = ({ endpoints, configEndpoints, stateEndpoints }) => {
+const mergeEndpointObjects = ({ endpoints, configEndpoints, stateEndpoints }) => {
   return configEndpoints.map(endpoint => {
     const modifiedEndpoint = endpoints.find(e => {
       return e.path === endpoint.path && e.method === endpoint.method
@@ -262,7 +262,7 @@ const validateEndpoint = async ({ apig, apiId, endpoint, state, stage, region })
 
 const validateEndpoints = async ({ apig, apiId, endpoints, state, stage, region }) => {
   const promises = endpoints.reduce((p, endpoint, i) => {
-    const previousObj = state.endpoints ? state.endpoints[i] : {}
+    const previousObj = state.endpoints ? state.endpoints[i] || {} : {}
 
     if (isModified({ obj: endpoint, previousObj })) {
       p.push(validateEndpoint({ apig, apiId, endpoint, state, stage, region }))
@@ -368,6 +368,12 @@ const createMethod = async ({ apig, apiId, endpoint }) => {
     params.authorizerId = endpoint.authorizerId
   }
 
+  if (endpoint.model) {
+    params.requestModels = {
+      'application/json': endpoint.model
+    }
+  }
+
   /* create array of strings that exist inside {} in the uri path
     starts match on } so it will match even if no opening brace */
   const paths = endpoint.path.match(/[^{\}]+(?=})/g)
@@ -443,6 +449,31 @@ const createMethods = async ({ apig, apiId, endpoints }) => {
   return endpoints
 }
 
+const createModel = async ({ apig, apiId, model }) => {
+  const params = {
+    'contentType': 'application/json',
+    name: model.title,
+    restApiId: apiId,
+    description: model.description || null,
+    schema: JSON.stringify(model, null, '\t')
+  }
+
+  try {
+    await apig.createModel(params).promise()
+  } catch(e) {
+    throw Error(e)
+  }
+}
+
+const createModels = async ({ apig, apiId, models }) => {
+  for (const model of models) {
+    // models must be created one at a time in case they reference eachother
+    await createModel({ apig, apiId, model })
+  }
+
+  return models
+}
+
 const createMethodResponse = ({ apig, apiId, endpoint }) => {
   const promises = []
 
@@ -454,6 +485,12 @@ const createMethodResponse = ({ apig, apiId, endpoint }) => {
       resourceId: endpoint.id,
       restApiId: apiId,
       statusCode: `${response.code}`
+    }
+
+    if (response.model) {
+      params.responseModels = {
+        'application/json': response.model
+      }
     }
 
     promises.push(apig.putMethodResponse(params).promise())
@@ -908,12 +945,14 @@ module.exports = {
   createModels,
   createIntegration,
   createIntegrations,
+  createIntegrationResponse,
+  createIntegrationResponses,
   createMethodResponse,
   createMethodResponses,
   createIntegrationResponse,
   createIntegrationResponses,
   createDeployment,
-  mergeEndpointObject,
+  mergeEndpointObjects,
   mergeModelObjects,
   removeMethod,
   removeMethods,

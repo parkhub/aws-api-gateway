@@ -120,6 +120,7 @@ class AwsApiGateway extends Component {
     this.context.debug(`Creating integration responses for API ID ${apiId}.`)
 
     endpoints = await createIntegrationResponses({apig, apiId, endpoints})
+
     this.context.debug(`Removing any old models for API ID ${apiId}`)
 
     models = mergeModelObjects({
@@ -140,7 +141,7 @@ class AwsApiGateway extends Component {
     endpoints = mergeEndpointObject({
       endpoints,
       configEndpoints: config.endpoints,
-      stateEndpoints: this.state.endpoints
+      stateEndpoints: this.state.endpoints || []
     })
 
     // keep endpoints in sync with provider
