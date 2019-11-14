@@ -93,6 +93,7 @@ class AwsApiGateway extends Component {
     })
 
     this.context.debug(`Validating models provided for API ID ${apiId}`)
+    config.models = config.models.flat()
 
     let models = await validateModels({ models: config.models || [], state: this.state, apiId })
 

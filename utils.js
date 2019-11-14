@@ -72,16 +72,13 @@ const updateApi = async({
   ops.push(Object.assign({}, op, { path: '/name', value: name }))
   ops.push(Object.assign({}, op, { path: '/minimumCompressionSize', value: JSON.stringify(minimumCompressionSize) || null }))
 
-  console.log(stateMediaTypes)
   for (type of stateMediaTypes || []) {
     ops.push({ op: "remove", path: `/binaryMediaTypes/${type.replace(/\//gi, '~1')}`, value: type.replace(/\//gi, '~1') })
   }
 
-  console.log(binaryMediaTypes)
   for (type of binaryMediaTypes || []) {
     ops.push({ op: 'replace', path: `/binaryMediaTypes/${type.replace(/\//gi, '~1')}`, value: type.replace(/\//gi, '~1') })
   }
-  console.log(ops)
 
   const api = await apig
     .updateRestApi({
@@ -665,34 +662,6 @@ const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
 
   if (endpoint.template) {
     integrationParams.requestTemplates = { 'application/json': endpoint.template }
-  }
-  // create array of strings that exist inside {} in the uri path
-  // starts match on } so it will match even if no opening brace
-  const paths = endpoint.path.match(/[^{\}]+(?=})/g)
-  if (paths && paths.length) {
-    integrationParams.requestParameters = {}
-    paths.forEach(path => {
-      const key = `integration.request.path.${path}`
-      const value = `method.request.path.${path}`
-      integrationParams.requestParameters[key] = value
-    });
-  }
-
-  // Add headers and querystrings to integration
-  if (endpoint.params) {
-    if (!integrationParams.requestParameters) integrationParams.requestParameters = {}
-    const { headers, querystrings } = endpoint.params
-    for (let h in headers) {
-      const key = `integration.request.header.${h}`
-      const value = typeof headers[h] === 'boolean' ? `method.request.header.${h}` : `'${headers[h]}'`
-      integrationParams.requestParameters[key] = value
-    }
-
-    for (let qs in querystrings) {
-      const key = `integration.request.querystring.${qs}`
-      const value = typeof querystrings[qs] === 'boolean' ? `method.request.querystring.${qs}` : `'${querystrings[qs]}'`
-      integrationParams.requestParameters[key] = value
-    }
   }
 
   try {
