@@ -15,6 +15,7 @@ const {
   createIntegrationResponses,
   createDeployment,
   enableCORS,
+  flattenArrays,
   mergeEndpointObjects,
   mergeModelObjects,
   removeApi,
@@ -44,10 +45,9 @@ class AwsApiGateway extends Component {
 
     const { name, description, region, stage, endpointTypes, deploymentDescription } = config
 
-    this.context.debug(`Starting API Gateway deployment with name ${name} in the ${region} region`)
+    flattenArrays(config)
 
-    // todo quick fix for array of objects in yaml issue
-    config.endpoints = Object.keys(config.endpoints).map((e) => config.endpoints[e])
+    this.context.debug(`Starting API Gateway deployment with name ${name} in the ${region} region`)
 
     const apig = new AWS.APIGateway({
       region,

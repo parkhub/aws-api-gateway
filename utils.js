@@ -51,6 +51,19 @@ const createApi = async ({ apig, name, description, endpointTypes, config: { min
   return api.id
 }
 
+/* Yaml does not allow merging arrays so it should be assumed they are nested,
+   this way the user may use yaml anchors to reuse arrays */
+function flattenArrays(obj) {
+  for (var k in obj) {
+    if (Array.isArray(obj[k])) {
+      obj[k] = obj[k].flat(Infinity)
+      flattenArrays(obj[k])
+    } else if (typeof obj[k] == "object" && obj[k] !== null) {
+      flattenArrays(obj[k]);
+    }
+  }
+}
+
 const updateApi = async({
   apig,
   apiId,
@@ -1027,6 +1040,7 @@ module.exports = {
   createPath,
   createPaths,
   enableCORS,
+  flattenArrays,
   mergeEndpointObjects,
   mergeModelObjects,
   removeMethod,
