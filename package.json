@@ -1,6 +1,6 @@
 {
   "name": "@parkhub/aws-api-gateway",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "main": "./serverless.js",
   "publishConfig": {
     "access": "public"
