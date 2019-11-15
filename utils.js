@@ -415,7 +415,17 @@ const createPath = async ({ apig, apiId, endpoint }) => {
     restApiId: apiId
   }
 
-  const createdPath = await apig.createResource(params).promise()
+  let createdPath
+  try {
+    createdPath = await apig.createResource(params).promise()
+  } catch (error) {
+    if (error.code === 'TooManyRequestsException') {
+      await utils.sleep(1000)
+      createdPath = await apig.createResource(params).promise()
+    } else {
+      throw error
+    }
+  }
 
   return createdPath.id
 }
