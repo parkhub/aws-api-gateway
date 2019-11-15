@@ -360,15 +360,6 @@ const validateModel = ({ model, models, apiId }) => {
     if (typeof m[key] === 'object') {
       return resolveReferences(m[key])
     }
-
-    if (key === '$ref') {
-      const ref = models.find(ele => ele.title === m[key])
-      if (ref) {
-        m[key] = `https://apigateway.amazonaws.com/restapis/${apiId}/models/${m[key]}`
-      } else {
-        throw Error('referenced models must be present in the models object')
-      }
-    }
   })
 
   resolveReferences(model)
