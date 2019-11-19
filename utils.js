@@ -7,7 +7,7 @@ const retry = (fn, opts = {}) => {
       try {
         return await fn()
       } catch (error) {
-        if (error.code !== 'TooManyRequestsException') {
+        if (error.code !== 'TooManyRequestsException' || !error.message.match(/concurrent modification/)) {
           // Stop retrying and throw the error
           throw new pRetry.AbortError(error)
         }
@@ -102,23 +102,16 @@ const updateApi = async({
   return api.id
 }
 
-const getPathId = async ({ apig, apiId, endpoint }) => {
-  // todo this called many times to stay up to date. Is it worth the latency?
-  const existingEndpoints = (await apig
-    .getResources({
-      restApiId: apiId
-    })
-    .promise()).items
-
+const getPathId = async ({ resources, endpoint }) => {
   if (!endpoint) {
-    const rootResourceId = existingEndpoints.find(
-      (existingEndpoint) => existingEndpoint.path === '/'
+    const rootResourceId = resources.items.find(
+      (resource) => resource.path === '/'
     ).id
     return rootResourceId
   }
 
-  const endpointFound = existingEndpoints.find(
-    (existingEndpoint) => existingEndpoint.path === endpoint.path
+  const endpointFound = resources.items.find(
+    (resource) => resource.path === endpoint.path
   )
 
   return endpointFound ? endpointFound.id : null
@@ -179,8 +172,8 @@ const mergeModelObjects = ({ models, configModels, stateModels }) => {
   })
 }
 
-const endpointExists = async ({ apig, apiId, endpoint }) => {
-  const resourceId = await retry(() => getPathId({ apig, apiId, endpoint }))
+const endpointExists = async ({ apig, apiId, endpoint, resources }) => {
+  const resourceId = await getPathId({ resources, endpoint })
 
   if (!resourceId) {
     return false
@@ -246,15 +239,15 @@ const compareProps = ({ obj, previousObj }) => {
 
 const isModified = async ({ obj, previousObj, lambda }) => {
   // Set authorizer and function values to arns if they are not
-  if (obj.function && obj.function.slice(0, 4) !== "arn:") {
-    const fxn = await lambda.getFunction({ FunctionName: obj.function }).promise()
-    obj.function = fxn.Configuration.FunctionArn
-  }
+  // if (obj.function && obj.function.slice(0, 4) !== "arn:") {
+  //   const fxn = await retry(() => lambda.getFunction({ FunctionName: obj.function }).promise())
+  //   obj.function = fxn.Configuration.FunctionArn
+  // }
 
-  if (obj.authorizer && obj.authorizer.slice(0, 4) !== "arn:") {
-    const fxn = await lambda.getFunction({ FunctionName: obj.authorizer }).promise()
-    obj.authorizer = fxn.Configuration.FunctionArn
-  }
+  // if (obj.authorizer && obj.authorizer.slice(0, 4) !== "arn:") {
+  //   const fxn = await retry(() => lambda.getFunction({ FunctionName: obj.authorizer }).promise())
+  //   obj.authorizer = fxn.Configuration.FunctionArn
+  // }
 
   // Remove fields in endpoint state that won't be in the config, allowing for comparison
   let previousCopy
@@ -315,10 +308,10 @@ const validateEndpointObject = ({ endpoint, apiId, stage, region }) => {
   return { ...endpoint, ...validatedEndpoint }
 }
 
-const validateEndpoint = async ({ apig, apiId, endpoint, state, stage, region }) => {
+const validateEndpoint = async ({ apig, apiId, endpoint, state, stage, region, resources }) => {
   const validatedEndpoint = validateEndpointObject({ endpoint, apiId, stage, region })
 
-  if (await endpointExists({ apig, apiId, endpoint: validatedEndpoint })) {
+  if (await endpointExists({ apig, apiId, resources, endpoint: validatedEndpoint })) {
     if (!myEndpoint(state, validatedEndpoint)) {
       throw Error(
         `endpoint ${validatedEndpoint.method} ${validatedEndpoint.path} already exists in provider`
@@ -342,10 +335,11 @@ const validateEndpoints = async ({ apig, apiId, endpoints, lambda, state, stage,
       modifiedEndpoints.push(endpoints[i])
     }
   }
+  const resources = await apig.getResources({ restApiId: apiId }).promise()
 
   const promises = []
   for (endpoint of modifiedEndpoints) {
-    promises.push(validateEndpoint({ apig, apiId, endpoint, state, stage, region }))
+    promises.push(validateEndpoint({ apig, apiId, endpoint, state, stage, region, resources }))
   }
 
   return Promise.all(promises)
@@ -391,8 +385,8 @@ const validateModels = async ({ apiId, models, state }) => {
   return Promise.all(promises)
 }
 
-const createPath = async ({ apig, apiId, endpoint }) => {
-  const pathId = await getPathId({ apig, apiId, endpoint })
+const createPath = async ({ apig, apiId, endpoint, resources }) => {
+  const pathId = await getPathId({ resources, endpoint })
 
   if (pathId) {
     return pathId
@@ -401,12 +395,12 @@ const createPath = async ({ apig, apiId, endpoint }) => {
   const pathParts = endpoint.path.split('/')
   const pathPart = pathParts.pop()
   const parentEndpoint = { path: pathParts.join('/') }
-
+  
   let parentId
   if (parentEndpoint.path === '') {
-    parentId = await getPathId({ apig, apiId })
+    parentId = await getPathId({ resources })
   } else {
-    parentId = await createPath({ apig, apiId, endpoint: parentEndpoint })
+    parentId = await retry(() => createPath({ apig, apiId, endpoint: parentEndpoint, resources }))
   }
 
   const params = {
@@ -415,26 +409,18 @@ const createPath = async ({ apig, apiId, endpoint }) => {
     restApiId: apiId
   }
 
-  let createdPath
-  try {
-    createdPath = await apig.createResource(params).promise()
-  } catch (error) {
-    if (error.code === 'TooManyRequestsException') {
-      await utils.sleep(1000)
-      createdPath = await apig.createResource(params).promise()
-    } else {
-      throw error
-    }
-  }
+  const createdPath = await retry(() => apig.createResource(params).promise())
+  resources.items = (await apig.getResources({ restApiId: apiId }).promise()).items
 
   return createdPath.id
 }
 
 const createPaths = async ({ apig, apiId, endpoints }) => {
   const createdEndpoints = []
+  const resources = await apig.getResources({ restApiId: apiId }).promise()
 
   for (const endpoint of endpoints) {
-    endpoint.id = await createPath({ apig, apiId, endpoint })
+    endpoint.id = await createPath({ apig, apiId, endpoint, resources })
     createdEndpoints.push(endpoint)
   }
 
@@ -555,7 +541,7 @@ const createMethodResponse = ({ apig, apiId, endpoint }) => {
       : {}
     }
 
-    const p = apig.putMethodResponse(params).promise()
+    const p = retry(() => apig.putMethodResponse(params).promise())
       .catch(e => {
         if (e.code === 'ConflictException') {
           const params = {
@@ -631,7 +617,7 @@ const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
 
   if (isLambda) {
     if (endpoint.function.slice(0, 4) !== "arn:") {
-      const func = await lambda.getFunction({ FunctionName: endpoint.authorizer }).promise()
+      const func = await lambda.getFunction({ FunctionName: endpoint.function }).promise()
       endpoint.function = func.Configuration.FunctionArn
     }
     functionName = endpoint.function.split(':')[6]
@@ -688,7 +674,7 @@ const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
   }
 
   try {
-    await apig.putIntegration(integrationParams).promise()
+    await retry(() => apig.putIntegration(integrationParams).promise())
   } catch (e) {
     if (e.code === 'ConflictException') {
       // this usually happens when there are too many endpoints for
@@ -727,6 +713,7 @@ const createIntegrations = async ({ apig, lambda, apiId, endpoints }) => {
 
   for (const endpoint of endpoints) {
     promises.push(createIntegration({ apig, lambda, apiId, endpoint }))
+    await utils.sleep(500)
   }
 
   return Promise.all(promises)
@@ -756,7 +743,7 @@ const createIntegrationResponse = ({ apig, apiId, endpoint }) => {
       params.responseTemplates = { 'application/json': response.template }
     }
 
-    promises.push(apig.putIntegrationResponse(params).promise())
+    promises.push(retry(() =>apig.putIntegrationResponse(params).promise()))
   }
 
   return promises
@@ -773,7 +760,7 @@ const createIntegrationResponses = async ({ apig, apiId, endpoints }) => {
 }
 
 const createDeployment = async ({ apig, apiId, stage, deploymentDescription }) => {
-  const deployment = await apig.createDeployment({ restApiId: apiId, stageName: stage, description: deploymentDescription }).promise()
+  const deployment = await retry(() =>apig.createDeployment({ restApiId: apiId, stageName: stage, description: deploymentDescription }).promise())
 
   // todo add update stage functionality
 

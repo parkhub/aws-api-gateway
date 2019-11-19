@@ -99,6 +99,12 @@ class AwsApiGateway extends Component {
     this.context.debug(`Deploying models for API ID ${apiId}`)
 
     models = await createModels({ apig, apiId, models })
+    this.state.models = mergeModelObjects({
+      models,
+      configModels: config.models || [],
+      stateModels: this.state.models || []
+    })
+    this.save()
 
     this.context.debug(`Deploying authorizers if any for API ID ${apiId}.`)
 
@@ -111,6 +117,21 @@ class AwsApiGateway extends Component {
     this.context.debug(`Deploying methods for API ID ${apiId}.`)
 
     endpoints = await createMethods({ apig, apiId, endpoints })
+
+    // save state of deployed endpoints with no integrations setup
+    // when first deploying an endpoint if something fails that endpoint will have to be manually 
+    // removed from the state object inorder to rety unless partially saved
+    const modE = endpoints.slice().map(e => {
+      delete e.responses
+      delete e.params
+      return e
+    })
+    this.state.endpoints = mergeEndpointObjects({
+      endpoints: modE,
+      configEndpoints: config.endpoints,
+      stateEndpoints: this.state.endpoints || []
+    })
+    this.save()
 
     this.context.debug(`Sleeping for couple of seconds before creating method integration.`)
 
