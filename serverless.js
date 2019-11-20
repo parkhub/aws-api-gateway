@@ -121,17 +121,17 @@ class AwsApiGateway extends Component {
     // save state of deployed endpoints with no integrations setup
     // when first deploying an endpoint if something fails that endpoint will have to be manually 
     // removed from the state object inorder to rety unless partially saved
-    const modE = endpoints.slice().map(e => {
-      delete e.responses
-      delete e.params
-      return e
-    })
-    this.state.endpoints = mergeEndpointObjects({
-      endpoints: modE,
-      configEndpoints: config.endpoints,
-      stateEndpoints: this.state.endpoints || []
-    })
-    this.save()
+    // const modE = endpoints.slice().map(e => {
+    //   delete e.responses
+    //   delete e.params
+    //   return e
+    // })
+    // this.state.endpoints = mergeEndpointObjects({
+    //   endpoints: modE,
+    //   configEndpoints: config.endpoints,
+    //   stateEndpoints: this.state.endpoints || []
+    // })
+    // this.save()
 
     this.context.debug(`Sleeping for couple of seconds before creating method integration.`)
 

@@ -15,7 +15,6 @@ const retry = (fn, opts = {}) => {
       }
     },
     {
-      retries: 5,
       minTimeout: 1000,
       factor: 2,
       ...opts
@@ -480,34 +479,15 @@ const createMethod = async ({ apig, apiId, endpoint }) => {
     }
   }
 
-  try {
-    await apig.putMethod(params).promise()
-  } catch (e) {
-    if (e.code === 'ConflictException' && endpoint.authorizerId) {
-      // make sure authorizer config are always up to date
-      const updateMethodParams = {
-        httpMethod: endpoint.method,
-        resourceId: endpoint.id,
-        restApiId: apiId,
-        patchOperations: [
-          {
-            op: 'replace',
-            path: '/authorizationType',
-            value: 'CUSTOM'
-          },
-          {
-            op: 'replace',
-            path: '/authorizerId',
-            value: endpoint.authorizerId
-          }
-        ]
+  return retry(() => apig.putMethod(params).promise(), { maxTimeout: 5000 })
+    .catch(async e => {
+      if (e.code === 'ConflictException' && e.message.match(/concurrent modification/)) {
+        await utils.sleep(5000)
+        await retry(() => apig.putMethod(params).promise(), { maxTimeout: 5000 })
+      } else if (e.code !== 'ConflictException') {
+        throw Error(e)
       }
-
-      await apig.updateMethod(updateMethodParams).promise()
-    } else if (e.code !== 'ConflictException') {
-      throw Error(e)
-    }
-  }
+    })
 }
 
 const createMethods = async ({ apig, apiId, endpoints }) => {
@@ -522,8 +502,7 @@ const createMethods = async ({ apig, apiId, endpoints }) => {
   return endpoints
 }
 
-const createMethodResponse = ({ apig, apiId, endpoint }) => {
-  const promises = []
+const createMethodResponse = async ({ apig, apiId, endpoint }) => {
 
   for (const response of (endpoint.responses || [])) {
     const params = {
@@ -541,38 +520,23 @@ const createMethodResponse = ({ apig, apiId, endpoint }) => {
       : {}
     }
 
-    const p = retry(() => apig.putMethodResponse(params).promise())
+    await retry(() => apig.putMethodResponse(params).promise(), { maxTimeout: 5000 })
       .catch(e => {
-        if (e.code === 'ConflictException') {
-          const params = {
-            httpMethod: endpoint.method,
-            resourceId: endpoint.id,
-            restApiId: apiId,
-            statusCode: `${response.code}`,
-            patchOperations:[{
-              op: 'replace',
-              path: '/responseParameters'
-            }]
-          }
-          return apig.updateMethodResponse(params)
+        console.log(e.code)
+        if (e.code === 'ConflictException' && e.message.match(/concurrent modification/)) {
+          return retry(() => apig.putMethodResponse(params).promise(), { maxTimeout: 5000 })
         }
         throw e
       })
-
-    promises.push(p)
   }
-
-  return promises
 }
 
 const createMethodResponses = async ({ apig, apiId, endpoints }) => {
-  const promises = []
-
   for (const endpoint of endpoints) {
-    promises.push(...createMethodResponse({apig, apiId, endpoint}))
+    await createMethodResponse({apig, apiId, endpoint})
   }
 
-  return Promise.all(promises).then(() => endpoints)
+  return endpoints
 }
 
 const createModel = async ({ apig, apiId, model }) => {
@@ -719,7 +683,7 @@ const createIntegrations = async ({ apig, lambda, apiId, endpoints }) => {
   return Promise.all(promises)
 }
 
-const createIntegrationResponse = ({ apig, apiId, endpoint }) => {
+const createIntegrationResponse = async ({ apig, apiId, endpoint }) => {
   const promises = []
   if (!endpoint.responses) return []
 
@@ -743,20 +707,27 @@ const createIntegrationResponse = ({ apig, apiId, endpoint }) => {
       params.responseTemplates = { 'application/json': response.template }
     }
 
-    promises.push(retry(() =>apig.putIntegrationResponse(params).promise()))
+    const p = retry(() => apig.putIntegrationResponse(params).promise(), { maxTimeout: 5000 })
+      .catch(e => {
+        if (e.code === 'ConflictException' && e.message.match(/concurrent modification/)) {
+          return retry(() => apig.putIntegrationResponse(params).promise(), { maxTimeout: 5000 })
+        }
+        throw e
+      })
+
+    promises.push(p)
   }
 
-  return promises
+  return Promise.all(promises)
 }
 
 const createIntegrationResponses = async ({ apig, apiId, endpoints }) => {
-  const promises = []
 
   for (const endpoint of endpoints) {
-    promises.push(...createIntegrationResponse({ apig, apiId, endpoint }))
+    await createIntegrationResponse({ apig, apiId, endpoint })
   }
 
-  return Promise.all(promises).then(() => endpoints)
+  return endpoints
 }
 
 const createDeployment = async ({ apig, apiId, stage, deploymentDescription }) => {
@@ -811,7 +782,7 @@ const removeResources = async ({ apig, apiId, endpoints }) => {
     restApiId: apiId
   }
 
-  const resources = await apig.getResources(params).promise()
+  const resources = await retry(() => apig.getResources(params).promise())
 
   const promises = []
 
