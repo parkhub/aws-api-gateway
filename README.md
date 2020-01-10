@@ -67,6 +67,7 @@ restApi:
         mehtod: GET
         function: getEvents-${stage} # refer to functions with name only
         authorizer: authorize-events # custom lambda authorizer supported
+        validator: 2 # validation type to use 0: Body only, 1: Body and Params, 2: Params only
 
       - path: /events
         method: POST
