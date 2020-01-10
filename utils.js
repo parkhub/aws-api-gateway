@@ -1,27 +1,3 @@
-const pRetry = require('p-retry')
-const { utils } = require('@serverless/core')
-
-const retry = (fn, opts = {}) => {
-  return pRetry(
-    async () => {
-      try {
-        return await fn()
-      } catch (error) {
-        if (error.code !== 'TooManyRequestsException' || !error.message.match(/concurrent modification/)) {
-          // Stop retrying and throw the error
-          throw new pRetry.AbortError(error)
-        }
-        throw error
-      }
-    },
-    {
-      minTimeout: 1000,
-      factor: 2,
-      ...opts
-    }
-  )
-}
-
 const apiExists = async ({ apig, apiId }) => {
   try {
     await apig.getRestApi({ restApiId: apiId }).promise()
@@ -34,14 +10,11 @@ const apiExists = async ({ apig, apiId }) => {
   }
 }
 
-const createApi = async ({ apig, name, description, endpointTypes, config: { minimumCompressionSize, binaryMediaTypes }}) => {
+const createApi = async ({ apig, name, description, config: { minimumCompressionSize, binaryMediaTypes }}) => {
   const api = await apig
     .createRestApi({
       name,
       description,
-      endpointConfiguration: {
-        types: endpointTypes
-      },
       minimumCompressionSize,
       binaryMediaTypes
     })
@@ -52,7 +25,7 @@ const createApi = async ({ apig, name, description, endpointTypes, config: { min
 
 /* Yaml does not allow merging arrays so it should be assumed they are nested,
    this way the user may use yaml anchors to reuse arrays */
-function flattenArrays(obj) {
+const flattenArrays = (obj) => {
   for (var k in obj) {
     if (Array.isArray(obj[k])) {
       obj[k] = obj[k].flat(Infinity)
@@ -61,59 +34,6 @@ function flattenArrays(obj) {
       flattenArrays(obj[k]);
     }
   }
-}
-
-const updateApi = async({
-  apig,
-  apiId,
-  description,
-  endpointTypes,
-  name,
-  config: { minimumCompressionSize, binaryMediaTypes },
-  state: { stateMediaTypes }
-}) => {
-  const ops = []
-  const op = {
-    op: 'replace',
-    path: '',
-    value: ''
-  }
-
-  ops.push(Object.assign({}, op, { path: '/description', value: description }))
-  ops.push(Object.assign({}, op, { path: '/endpointConfiguration/types/{type}', value: endpointTypes[0] }))
-  ops.push(Object.assign({}, op, { path: '/name', value: name }))
-  ops.push(Object.assign({}, op, { path: '/minimumCompressionSize', value: JSON.stringify(minimumCompressionSize) || null }))
-
-  for (type of stateMediaTypes || []) {
-    ops.push({ op: "remove", path: `/binaryMediaTypes/${type.replace(/\//gi, '~1')}`, value: type.replace(/\//gi, '~1') })
-  }
-
-  for (type of binaryMediaTypes || []) {
-    ops.push({ op: 'replace', path: `/binaryMediaTypes/${type.replace(/\//gi, '~1')}`, value: type.replace(/\//gi, '~1') })
-  }
-
-  const api = await apig
-    .updateRestApi({
-      restApiId: apiId,
-      patchOperations: ops
-    }).promise()
-
-  return api.id
-}
-
-const getPathId = async ({ resources, endpoint }) => {
-  if (!endpoint) {
-    const rootResourceId = resources.items.find(
-      (resource) => resource.path === '/'
-    ).id
-    return rootResourceId
-  }
-
-  const endpointFound = resources.items.find(
-    (resource) => resource.path === endpoint.path
-  )
-
-  return endpointFound ? endpointFound.id : null
 }
 
 const enableCORS = ({ endpoints }) => {
@@ -156,700 +76,199 @@ const enableCORS = ({ endpoints }) => {
   return endpoints
 }
 
-const mergeModelObjects = ({ models, configModels, stateModels }) => {
-  return configModels.map(model => {
-    const modifiedModel = models.find(m => {
-      return m.title === model.title
-    })
-
-    // if no modified model is found pull from state
-    const stateModel = modifiedModel || stateModels.find(m => {
-        return m.title === model.title
-      })
-
-    return modifiedModel || stateModel
-  })
+const updateApi = ({ template, name, description, binaryMediaTypes, minimumCompressionSize }) => {
+  template.info.title = name
+  template.info.description = description
+  template.info.version = "2016-09-12T17:50:37Z"
+  template["x-amazon-apigateway-minimum-compression-size"] = minimumCompressionSize
+  template["x-amazon-apigateway-binary-media-types"] = binaryMediaTypes
+  return template
 }
 
-const endpointExists = async ({ apig, apiId, endpoint, resources }) => {
-  const resourceId = await getPathId({ resources, endpoint })
-
-  if (!resourceId) {
-    return false
+const createModels = ({ template, models }) => {
+  template.components = {schemas:{}}
+  models = models.flat()
+  for (let model of models) {
+    template.components.schemas[model.title] = model
   }
 
-  const params = {
-    httpMethod: endpoint.method,
-    resourceId,
-    restApiId: apiId
-  }
-
-  try {
-    await retry(() => apig.getMethod(params).promise())
-    return true
-  } catch (e) {
-    if (e.code === 'NotFoundException') {
-      return false
-    }
-  }
+  return template
 }
 
-const myEndpoint = (state, endpoint) => {
-  if (
-    state.endpoints &&
-    state.endpoints.find((e) => e.method === endpoint.method && e.path === endpoint.path)
-  ) {
-    return true
+const createAuthorizer = async ({ apig, lambda, apiId, endpoint}) => {
+  if (endpoint.authorizer.slice(0, 4) !== "arn:") {
+    const func = await lambda.getFunction({ FunctionName: endpoint.authorizer }).promise()
+    endpoint.authorizer = func.Configuration.FunctionArn
   }
-  return false
-}
+  const authorizerName = endpoint.authorizer.split(':')[6]
+  const region = endpoint.authorizer.split(':')[3]
+  const accountId = endpoint.authorizer.split(':')[4]
 
-const mergeEndpointObjects = ({ endpoints, configEndpoints, stateEndpoints }) => {
-  return configEndpoints.map(endpoint => {
-    const modifiedEndpoint = endpoints.find(e => {
-      return e.path === endpoint.path && e.method === endpoint.method
-    })
+  const authorizers = await apig.getAuthorizers({ restApiId: apiId }).promise()
 
-    const stateEndpoint = modifiedEndpoint || stateEndpoints.find(e => {
-      return e.path === endpoint.path && e.method === endpoint.method
-    })
+  let authorizer = authorizers.items.find(
+    (authorizerItem) => authorizerItem.name === authorizerName
+  )
 
-    return modifiedEndpoint || stateEndpoint
-  })
-}
-
-const compareProps = ({ obj, previousObj }) => {
-  // Both arrays and objects must have the same number of keys and each key be equal
-  if (Array.isArray(obj) && previousObj) {
-    return obj.length === previousObj.length
-      && obj.every((key, i) => compareProps({ obj: key, previousObj: previousObj[i] }))
-  }
-
-  if (typeof obj === 'object' && previousObj) {
-    const objKeys = Object.keys(obj)
-    const previousObjKeys = Object.keys(previousObj)
-
-    return objKeys.length === previousObjKeys.length
-      && objKeys.every((key) => compareProps({ obj: obj[key], previousObj: previousObj[key] }))
-  }
-
-  return obj === previousObj
-}
-
-const isModified = async ({ obj, previousObj, lambda }) => {
-  // Set authorizer and function values to arns if they are not
-  // if (obj.function && obj.function.slice(0, 4) !== "arn:") {
-  //   const fxn = await retry(() => lambda.getFunction({ FunctionName: obj.function }).promise())
-  //   obj.function = fxn.Configuration.FunctionArn
-  // }
-
-  // if (obj.authorizer && obj.authorizer.slice(0, 4) !== "arn:") {
-  //   const fxn = await retry(() => lambda.getFunction({ FunctionName: obj.authorizer }).promise())
-  //   obj.authorizer = fxn.Configuration.FunctionArn
-  // }
-
-  // Remove fields in endpoint state that won't be in the config, allowing for comparison
-  let previousCopy
-  if (previousObj && previousObj.path && previousObj.method) {
-    previousCopy = Object.assign({}, previousObj)
-    delete previousCopy.authorizerId
-    delete previousCopy.url
-    delete previousCopy.id
-  }
-
-  return !compareProps({obj, previousCopy})
-}
-
-const validateEndpointObject = ({ endpoint, apiId, stage, region }) => {
-  const validMethods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'ANY']
-
-  if (typeof endpoint !== 'object') {
-    throw Error('endpoint must be an object')
-  }
-
-  if (!endpoint.method) {
-    throw Error(`missing method property for endpoint "${JSON.stringify(endpoint)}"`)
-  }
-
-  if (endpoint.path === '') {
-    throw Error(
-      `endpoint path cannot be an empty string for endpoint "${JSON.stringify(endpoint)}"`
-    )
-  }
-
-  if (!endpoint.path) {
-    throw Error(`missing path property for endpoint "${JSON.stringify(endpoint)}"`)
-  }
-
-  if (typeof endpoint.method !== 'string' || typeof endpoint.path !== 'string') {
-    throw Error(`invalid endpoint "${JSON.stringify(endpoint)}"`)
-  }
-
-  if (!validMethods.includes(endpoint.method.toUpperCase())) {
-    throw Error(`invalid method for endpoint "${JSON.stringify(endpoint)}"`)
-  }
-
-  if (endpoint.path !== '/') {
-    if (!endpoint.path.startsWith('/')) {
-      endpoint.path = `/${endpoint.path}`
-    }
-    if (endpoint.path.endsWith('/')) {
-      endpoint.path = endpoint.path.substring(0, endpoint.path.length - 1)
-    }
-  }
-
-  const validatedEndpoint = {
-    url: `https://${apiId}.execute-api.${region}.amazonaws.com/${stage}${endpoint.path}`,
-    path: endpoint.path,
-    method: endpoint.method.toUpperCase()
-  }
-
-  return { ...endpoint, ...validatedEndpoint }
-}
-
-const validateEndpoint = async ({ apig, apiId, endpoint, state, stage, region, resources }) => {
-  const validatedEndpoint = validateEndpointObject({ endpoint, apiId, stage, region })
-
-  if (await endpointExists({ apig, apiId, resources, endpoint: validatedEndpoint })) {
-    if (!myEndpoint(state, validatedEndpoint)) {
-      throw Error(
-        `endpoint ${validatedEndpoint.method} ${validatedEndpoint.path} already exists in provider`
-      )
-    }
-  }
-
-  return validatedEndpoint
-}
-
-const validateEndpoints = async ({ apig, apiId, endpoints, lambda, state, stage, region }) => {
-  const modifiedEndpoints = []
-  for (i = 0; i < endpoints.length; i++) {
-    const modified = await isModified({
-      obj: endpoints[i],
-      previousObj: state.endpoints ? state.endpoints[i] : null,
-      lambda
-    })
-
-    if (modified) {
-      modifiedEndpoints.push(endpoints[i])
-    }
-  }
-  const resources = await apig.getResources({ restApiId: apiId }).promise()
-
-  const promises = []
-  for (endpoint of modifiedEndpoints) {
-    promises.push(validateEndpoint({ apig, apiId, endpoint, state, stage, region, resources }))
-  }
-
-  return Promise.all(promises)
-}
-
-const validateModel = ({ model, models, apiId }) => {
-  if (!model.title) {
-    throw Error('models must have a title')
-  }
-
-  const resolveReferences = (m) => Object.keys(m).forEach((key) => {
-    if (typeof m[key] === 'object') {
-      return resolveReferences(m[key])
-    }
-
-    if (key === '$ref') {
-      const ref = models.find(ele => ele.title === m[key])
-      if (ref) {
-        m[key] = `https://apigateway.amazonaws.com/restapis/${apiId}/models/${m[key]}`
-      } else {
-        throw Error('referenced models must be present in the models object')
-      }
-    }
-  })
-
-  resolveReferences(model)
-
-  return model
-}
-
-const validateModels = async ({ apiId, models, state }) => {
-  const promises = models.reduce((m, model, i) => {
-    const previousObj = state.models ? state.models[i] || {} : {}
-
-    if (isModified({ obj: model, previousObj })) {
-      m.push(validateModel({model, models, apiId}))
-    }
-
-    return m
-  }, [])
-
-
-  return Promise.all(promises)
-}
-
-const createPath = async ({ apig, apiId, endpoint, resources }) => {
-  const pathId = await getPathId({ resources, endpoint })
-
-  if (pathId) {
-    return pathId
-  }
-
-  const pathParts = endpoint.path.split('/')
-  const pathPart = pathParts.pop()
-  const parentEndpoint = { path: pathParts.join('/') }
-  
-  let parentId
-  if (parentEndpoint.path === '') {
-    parentId = await getPathId({ resources })
-  } else {
-    parentId = await retry(() => createPath({ apig, apiId, endpoint: parentEndpoint, resources }))
-  }
-
-  const params = {
-    pathPart,
-    parentId,
-    restApiId: apiId
-  }
-
-  const createdPath = await retry(() => apig.createResource(params).promise())
-  resources.items = (await apig.getResources({ restApiId: apiId }).promise()).items
-
-  return createdPath.id
-}
-
-const createPaths = async ({ apig, apiId, endpoints }) => {
-  const createdEndpoints = []
-  const resources = await apig.getResources({ restApiId: apiId }).promise()
-
-  for (const endpoint of endpoints) {
-    endpoint.id = await createPath({ apig, apiId, endpoint, resources })
-    createdEndpoints.push(endpoint)
-  }
-
-  return createdEndpoints
-}
-
-const createMethod = async ({ apig, apiId, endpoint }) => {
-  const params = {
-    authorizationType: 'NONE',
-    httpMethod: endpoint.method,
-    resourceId: endpoint.id,
-    apiKeyRequired: endpoint.apiKey || true,
-    restApiId: apiId
-  }
-
-  if (endpoint.authorizerId) {
-    params.authorizationType = 'CUSTOM'
-    params.authorizerId = endpoint.authorizerId
-  }
-
-  if (endpoint.model) {
-    params.requestModels = {
-      'application/json': endpoint.model
-    }
-  }
-
-  /* create array of strings that exist inside {} in the uri path
-    starts match on } so it will match even if no opening brace */
-  const paths = endpoint.path.match(/[^{\}]+(?=})/g)
-  if (paths && paths.length) {
-    params.requestParameters = {}
-    paths.forEach(path => {
-      const key = `method.request.path.${path}`
-      params.requestParameters[key] = true
-    });
-  }
-
-  // Add headers and querystrings to method
-  if (endpoint.params) {
-    if (!params.requestParameters) params.requestParameters = {}
-    const {headers, querystrings} = endpoint.params
-
-    /* All headers and querystrings passed as static values
-      rather than booleans will not be defined in the method */
-    for (let h in headers) {
-      if (typeof headers[h] === 'boolean') {
-        const key = `method.request.header.${h}`
-        params.requestParameters[key] = headers[h]
-      }
-    }
-
-    for (let qs in querystrings) {
-      if (typeof querystrings[qs] === 'boolean') {
-        const key = `method.request.querystring.${qs}`
-        params.requestParameters[key] = querystrings[qs]
-      }
-    }
-  }
-
-  return retry(() => apig.putMethod(params).promise(), { maxTimeout: 5000 })
-    .catch(async e => {
-      if (e.code === 'ConflictException' && e.message.match(/concurrent modification/)) {
-        await utils.sleep(5000)
-        await retry(() => apig.putMethod(params).promise(), { maxTimeout: 5000 })
-      } else if (e.code !== 'ConflictException') {
-        throw Error(e)
-      }
-    })
-}
-
-const createMethods = async ({ apig, apiId, endpoints }) => {
-  const promises = []
-
-  for (const endpoint of endpoints) {
-    promises.push(createMethod({ apig, apiId, endpoint }))
-  }
-
-  await Promise.all(promises)
-
-  return endpoints
-}
-
-const createMethodResponse = async ({ apig, apiId, endpoint }) => {
-
-  for (const response of (endpoint.responses || [])) {
-    const params = {
-      httpMethod: endpoint.method,
-      resourceId: endpoint.id,
+  if (!authorizer) {
+    const createAuthorizerParams = {
+      name: authorizerName,
       restApiId: apiId,
-      statusCode: `${response.code}`,
-      responseModels: {
-        'application/json': response.model || 'Empty'
-      },
-      responseParameters: response.headers ? Object.keys(response.headers).reduce((res, ele) => {
-        res[`method.response.header.${ele}`] = false
-        return res
-      }, {})
-      : {}
+      type: 'TOKEN',
+      authorizerUri: `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${endpoint.authorizer}/invocations`,
+      identitySource: 'method.request.header.Auth'
     }
 
-    await retry(() => apig.putMethodResponse(params).promise(), { maxTimeout: 5000 })
-      .catch(e => {
-        console.log(e.code)
-        if (e.code === 'ConflictException' && e.message.match(/concurrent modification/)) {
-          return retry(() => apig.putMethodResponse(params).promise(), { maxTimeout: 5000 })
-        }
-        throw e
-      })
-  }
-}
+    authorizer = await apig.createAuthorizer(createAuthorizerParams).promise()
 
-const createMethodResponses = async ({ apig, apiId, endpoints }) => {
-  for (const endpoint of endpoints) {
-    await createMethodResponse({apig, apiId, endpoint})
-  }
-
-  return endpoints
-}
-
-const createModel = async ({ apig, apiId, model }) => {
-  const params = {
-    'contentType': 'application/json',
-    name: model.title,
-    restApiId: apiId,
-    description: model.description || null,
-    schema: JSON.stringify(model, null, '\t')
-  }
-
-  try {
-    await apig.createModel(params).promise()
-  } catch(e) {
-    if (e.code === 'ConflictException') {
-      await apig.updateModel({
-        name: model.title,
-        restApiId: apiId,
-        patchOperations: [
-          { op: 'replace', path: '/description', value: params.description },
-          { op: 'replace', path: '/schema', value: params.schema }
-        ]
-      })
-    } else {
-      throw Error(e)
-    }
-  }
-}
-
-const createModels = async ({ apig, apiId, models }) => {
-  for (const model of models) {
-    // models must be created one at a time in case they reference eachother
-    await createModel({ apig, apiId, model })
-  }
-
-  return models
-}
-
-const createIntegration = async ({ apig, lambda, apiId, endpoint }) => {
-  const isLambda = !!endpoint.function
-  let functionName, accountId, region
-
-  if (isLambda) {
-    if (endpoint.function.slice(0, 4) !== "arn:") {
-      const func = await lambda.getFunction({ FunctionName: endpoint.function }).promise()
-      endpoint.function = func.Configuration.FunctionArn
-    }
-    functionName = endpoint.function.split(':')[6]
-    accountId = endpoint.function.split(':')[4]
-    region = endpoint.function.split(':')[3]
-  }
-
-  const integrationParams = {
-    httpMethod: endpoint.method || 'POST',
-    resourceId: endpoint.id,
-    restApiId: apiId,
-    type: endpoint.type || (isLambda ? 'AWS_PROXY' : 'HTTP')
-  }
-
-  if (endpoint.type !== 'MOCK') {
-    integrationParams.uri = isLambda
-      ? `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${endpoint.function}/invocations`
-      : endpoint.URI
-
-    integrationParams.integrationHttpMethod = endpoint.method
-  }
-
-  // create array of strings that exist inside {} in the uri path
-  // starts match on } so it will match even if no opening brace
-  const paths = endpoint.path.match(/[^{\}]+(?=})/g)
-  if (paths && paths.length) {
-    integrationParams.requestParameters = {}
-    paths.forEach(path => {
-      const key = `integration.request.path.${path}`
-      const value = `method.request.path.${path}`
-      integrationParams.requestParameters[key] = value
-    });
-  }
-
-  // Add headers and querystrings to integration
-  if (endpoint.params) {
-    if (!integrationParams.requestParameters) integrationParams.requestParameters = {}
-    const { headers, querystrings } = endpoint.params
-    for (let h in headers) {
-      const key = `integration.request.header.${h}`
-      const value = typeof headers[h] === 'boolean' ? `method.request.header.${h}` : `'${headers[h]}'`
-      integrationParams.requestParameters[key] = value
-    }
-
-    for (let qs in querystrings) {
-      const key = `integration.request.querystring.${qs}`
-      const value = typeof querystrings[qs] === 'boolean' ? `method.request.querystring.${qs}` : `'${querystrings[qs]}'`
-      integrationParams.requestParameters[key] = value
-    }
-  }
-
-  if (endpoint.template) {
-    integrationParams.requestTemplates = { 'application/json': endpoint.template }
-  }
-
-  try {
-    await retry(() => apig.putIntegration(integrationParams).promise())
-  } catch (e) {
-    if (e.code === 'ConflictException') {
-      // this usually happens when there are too many endpoints for
-      // the same function. Retrying after couple of seconds ensures
-      // any pending integration requests are resolved.
-      await utils.sleep(2000)
-      return createIntegration({ apig, lambda, apiId, endpoint })
-    }
-    throw Error(e)
-  }
-
-  // Create lambda trigger for AWS_PROXY endpoints
-  if (isLambda) {
     const permissionsParams = {
       Action: 'lambda:InvokeFunction',
-      FunctionName: functionName,
+      FunctionName: authorizerName,
       Principal: 'apigateway.amazonaws.com',
       SourceArn: `arn:aws:execute-api:${region}:${accountId}:${apiId}/*/*`,
-      StatementId: `${functionName}-${apiId}`
+      StatementId: `${authorizerName}-${apiId}`
     }
 
     try {
       await lambda.addPermission(permissionsParams).promise()
-    } catch (e) {
-      if (e.code !== 'ResourceConflictException') {
-        throw Error(e)
+    } catch (error) {
+      if (error.code != 'ResourceConflictException') {
+        throw error
       }
     }
-  }
 
-  return endpoint
+    return authorizer
+  } else {
+    return authorizer
+  }
 }
 
-const createIntegrations = async ({ apig, lambda, apiId, endpoints }) => {
-  const promises = []
-
-  for (const endpoint of endpoints) {
-    promises.push(createIntegration({ apig, lambda, apiId, endpoint }))
-    await utils.sleep(500)
-  }
-
-  return Promise.all(promises)
-}
-
-const createIntegrationResponse = async ({ apig, apiId, endpoint }) => {
-  const promises = []
-  if (!endpoint.responses) return []
-
-  for (const response of endpoint.responses) {
-    const params = {
-      httpMethod: endpoint.method,
-      resourceId: endpoint.id,
-      restApiId: apiId,
-      statusCode: `${response.code}`,
-      selectionPattern: `${response.code}`,
-      responseParameters: response.headers
-      ? Object.keys(response.headers).reduce((res, ele) => {
-        res[`method.response.header.${ele}`] = response.headers[ele]
-        return res
-      }, {})
-
-      : {}
+const createPaths = async ({ template, endpoints, apig, lambda, apiId, region }) => {
+  const authorizers = []
+  for (let endpoint of endpoints) {
+    if (!endpoint.path || !endpoint.method) {
+      throw Error('Endpoints must have method and path')
     }
 
-    if (response.template) {
-      params.responseTemplates = { 'application/json': response.template }
-    }
+    template.paths[endpoint.path] = template.paths[endpoint.path] || {}
+    template.paths[endpoint.path][endpoint.method.toLowerCase()] = {}
+    const path = template.paths[endpoint.path][endpoint.method.toLowerCase()]
 
-    const p = retry(() => apig.putIntegrationResponse(params).promise(), { maxTimeout: 5000 })
-      .catch(e => {
-        if (e.code === 'ConflictException' && e.message.match(/concurrent modification/)) {
-          return retry(() => apig.putIntegrationResponse(params).promise(), { maxTimeout: 5000 })
-        }
-        throw e
-      })
+    let authorizer = endpoint.authorizer
+    if (endpoint.authorizer) {
+      const created = authorizers.find(ele => ele.name === endpoint.authorizer)
 
-    promises.push(p)
-  }
-
-  return Promise.all(promises)
-}
-
-const createIntegrationResponses = async ({ apig, apiId, endpoints }) => {
-
-  for (const endpoint of endpoints) {
-    await createIntegrationResponse({ apig, apiId, endpoint })
-  }
-
-  return endpoints
-}
-
-const createDeployment = async ({ apig, apiId, stage, deploymentDescription }) => {
-  const deployment = await retry(() =>apig.createDeployment({ restApiId: apiId, stageName: stage, description: deploymentDescription }).promise())
-
-  // todo add update stage functionality
-
-  return deployment.id
-}
-
-const removeMethod = async ({ apig, apiId, endpoint }) => {
-  const params = {
-    restApiId: apiId,
-    resourceId: endpoint.id,
-    httpMethod: endpoint.method
-  }
-
-  try {
-    await apig.deleteMethod(params).promise()
-  } catch (e) {
-    if (e.code !== 'NotFoundException') {
-      throw Error(e)
-    }
-  }
-
-  return {}
-}
-
-const removeMethods = async ({ apig, apiId, endpoints }) => {
-  const promises = []
-
-  for (const endpoint of endpoints) {
-    promises.push(removeMethod({ apig, apiId, endpoint }))
-  }
-
-  return Promise.all(promises)
-}
-
-const removeResource = async ({ apig, apiId, endpoint }) => {
-  try {
-    await apig.deleteResource({ restApiId: apiId, resourceId: endpoint.id }).promise()
-  } catch (e) {
-    if (e.code !== 'NotFoundException') {
-      throw Error(e)
-    }
-  }
-  return {}
-}
-
-const removeResources = async ({ apig, apiId, endpoints }) => {
-  const params = {
-    restApiId: apiId
-  }
-
-  const resources = await retry(() => apig.getResources(params).promise())
-
-  const promises = []
-
-  for (const endpoint of endpoints) {
-    const resource = resources.items.find((resourceItem) => resourceItem.id === endpoint.id)
-
-    const childResources = resources.items.filter(
-      (resourceItem) => resourceItem.parentId === endpoint.id
-    )
-
-    const resourceMethods = resource ? Object.keys(resource.resourceMethods || {}) : []
-
-    // only remove resources if they don't have methods nor child resources
-    // to make sure we don't disrupt other services using the same api
-    if (resource && resourceMethods.length === 0 && childResources.length === 0) {
-      promises.push(removeResource({ apig, apiId, endpoint }))
-    }
-  }
-
-  if (promises.length === 0) {
-    return []
-  }
-
-  await Promise.all(promises)
-
-  return removeResources({ apig, apiId, endpoints })
-}
-
-const removeApi = async ({ apig, apiId }) => {
-  try {
-    await apig.deleteRestApi({ restApiId: apiId }).promise()
-  } catch (e) {}
-}
-
-const createAuthorizer = async ({ apig, lambda, apiId, endpoint }) => {
-  if (endpoint.authorizer) {
-    if (endpoint.authorizer.slice(0,4) !== "arn:") {
-      const func = await lambda.getFunction({FunctionName: endpoint.authorizer}).promise()
-      endpoint.authorizer = func.Configuration.FunctionArn
-    }
-    const authorizerName = endpoint.authorizer.split(':')[6]
-    const region = endpoint.authorizer.split(':')[3]
-    const accountId = endpoint.authorizer.split(':')[4]
-
-    const authorizers = await apig.getAuthorizers({ restApiId: apiId }).promise()
-
-    let authorizer = authorizers.items.find(
-      (authorizerItem) => authorizerItem.name === authorizerName
-    )
-
-    if (!authorizer) {
-      const createAuthorizerParams = {
-        name: authorizerName,
-        restApiId: apiId,
-        type: 'TOKEN',
-        authorizerUri: `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${endpoint.authorizer}/invocations`,
-        identitySource: 'method.request.header.Auth'
+      if (!created) {
+        authorizer = await createAuthorizer({apig, lambda, apiId, endpoint})
+        authorizers.push(authorizer)
       }
+    }
 
-      authorizer = await apig.createAuthorizer(createAuthorizerParams).promise()
+    path["x-amazon-apigateway-integration"] = {}
+    if (endpoint.params) {
+      const {parameters, integrationParams} = setPathParams({params: endpoint.params, path: endpoint.path})
+      path.parameters = parameters
+      if (!endpoint.function) {
+        path["x-amazon-apigateway-integration"].requestParameters = integrationParams
+      }
+    }
 
+    if (endpoint.responses && !endpoint.function) {
+      const {responses, integrationResponses} = setPathResponses({resps: endpoint.responses})
+      path.responses = responses
+      path["x-amazon-apigateway-integration"].responses = integrationResponses
+    } else if (endpoint.function) {
+      path["x-amazon-apigateway-integration"].responses = { default: { statusCode: "200" } }
+      path.responses = {}
+    }
+
+    path.security = [{"api_key":[]}]
+    if (endpoint.authorizer) {
+      const obj = {}
+      obj[authorizer.name] = []
+      path.security.push(obj)
+    }
+
+    path["x-amazon-apigateway-integration"].passthroughBehavior = "when_no_match"
+
+    if (endpoint.template)
+      path.requestTemplates = {"application/json": path.template}
+
+    if (endpoint.method === 'OPTIONS') {
+      path["x-amazon-apigateway-integration"].type = 'mock'
+    } else {
+      path["x-amazon-apigateway-integration"].httpMethod = endpoint.method
+      path["x-amazon-apigateway-integration"].type = endpoint.URI ? 'http' : 'aws_proxy'
+    }
+
+    if (endpoint.URI) {
+      path["x-amazon-apigateway-integration"].uri = endpoint.URI
+    } else if (endpoint.method.toLowerCase() != 'options') {
+      const arn = await getLambda({func: endpoint.function, lambda})
+      path["x-amazon-apigateway-integration"].httpMethod = 'post'
+      path["x-amazon-apigateway-integration"].uri = `arn:aws:apigateway:${endpoint.region || region}:lambda:path/2015-03-31/functions/${arn}/invocations`
+    }
+
+    if (endpoint.validator) {
+      setValidator({ validator: endpoint.validator, template, endpoint })
+    }
+  }
+
+  return template
+}
+
+const createDocumentation = ({ template, endpoints, models }) => {
+  for (let endpoint of endpoints) {
+    if (endpoint.description) {
+
+    }
+
+    if (endpoint.params) {
+      for (let query in endpoint.params.querystrings) {}
+      for (let header in endpoint.params.headers) {}
+      for (let path in endpoint.params.paths) {}
+    }
+  }
+
+  for (let model of models) {}
+}
+
+const setValidator = async ({validator, template, endpoint}) => {
+  template["x-amazon-apigateway-request-validators"] = {
+    Body: { validateRequestBody: true, validateRequestParameters: false },
+    Params: { validateRequestBody: false, validateRequestParameters: true },
+    BodyAndParams: { validateRequestBody: true, validateRequestParameters: true },
+  }
+
+  const path = template.paths[endpoint.path][endpoint.method.toLowerCase()]
+  switch (validator) {
+    case 0:
+      path["x-amazon-apigateway-request-validator"] = 'Body'
+      break
+    case 1:
+      path["x-amazon-apigateway-request-validator"] = 'BodyAndParams'
+      break
+    case 2:
+      path["x-amazon-apigateway-request-validator"] = 'Params'
+      break
+    default:
+      path["x-amazon-apigateway-request-validator"] = 'NONE'
+  }
+
+  return template
+}
+
+const addLambdaPermissions = async ({ endpoints, apiId, lambda, region }) => {
+  for (let endpoint of endpoints) {
+    if (endpoint.function) {
+      const arn = await getLambda({ func: endpoint.function, lambda })
+      const accountId = arn.split(':')[4]
       const permissionsParams = {
         Action: 'lambda:InvokeFunction',
-        FunctionName: authorizerName,
+        FunctionName: endpoint.function,
         Principal: 'apigateway.amazonaws.com',
-        SourceArn: `arn:aws:execute-api:${region}:${accountId}:${apiId}/*/*`,
-        StatementId: `${authorizerName}-${apiId}`
+        SourceArn: `arn:aws:execute-api:${region}:${accountId}:${apiId}/*/${endpoint.method}${endpoint.path}`,
+        StatementId: `${endpoint.function}-${apiId}-${endpoint.method}-${endpoint.path.split('/').join('')}`
       }
 
       try {
@@ -860,168 +279,109 @@ const createAuthorizer = async ({ apig, lambda, apiId, endpoint }) => {
         }
       }
     }
-
-    endpoint.authorizerId = authorizer.id
   }
-  return endpoint
 }
 
-const createAuthorizers = async ({ apig, lambda, apiId, endpoints }) => {
-  const updatedEndpoints = []
-
-  for (const endpoint of endpoints) {
-    endpoint.authorizerId = (await createAuthorizer({ apig, lambda, apiId, endpoint })).authorizerId
-    updatedEndpoints.push(endpoint)
+const getLambda = async ({func, lambda}) => {
+  let arn = func
+  if (func.slice(0, 4) !== "arn:") {
+    const f = await lambda.getFunction({ FunctionName: func }).promise()
+    arn = f.Configuration.FunctionArn
   }
 
-  return updatedEndpoints
+  return arn
 }
 
-const removeAuthorizer = async ({ apig, apiId, endpoint }) => {
-  // todo only remove authorizers that are not used by other services
-  if (endpoint.authorizerId) {
-    const updateMethodParams = {
-      httpMethod: endpoint.method,
-      resourceId: endpoint.id,
-      restApiId: apiId,
-      patchOperations: [
-        {
-          op: 'replace',
-          path: '/authorizationType',
-          value: 'NONE'
-        }
-      ]
-    }
-
-    await apig.updateMethod(updateMethodParams).promise()
-
-    const deleteAuthorizerParams = { restApiId: apiId, authorizerId: endpoint.authorizerId }
-
-    await apig.deleteAuthorizer(deleteAuthorizerParams).promise()
-  }
-  return endpoint
-}
-
-const removeAuthorizers = async ({ apig, apiId, endpoints }) => {
-  const promises = []
-
-  for (const endpoint of endpoints) {
-    promises.push(removeAuthorizer({ apig, apiId, endpoint }))
-  }
-
-  await Promise.all(promises)
-
-  return endpoints
-}
-
-const removeOutdatedEndpoints = async ({ apig, apiId, endpoints, stateEndpoints }) => {
-  const outdatedEndpoints = []
-  const outdatedAuthorizers = []
-  for (const stateEndpoint of stateEndpoints) {
-    const endpointInUse = endpoints.find(
-      (endpoint) => endpoint.method === stateEndpoint.method && endpoint.path === stateEndpoint.path
-    )
-
-    const authorizerInUse = endpoints.find(
-      (endpoint) => endpoint.authorizerId === stateEndpoint.authorizerId
-    )
-
-    if (!endpointInUse) {
-      outdatedEndpoints.push(stateEndpoint)
-    } else if (!authorizerInUse) {
-      outdatedAuthorizers.push(stateEndpoint)
+const setPathParams = ({params, path}) => {
+  parameters = []
+  integrationParams = {}
+  for (let query in params.querystrings) {
+    if (typeof params.querystrings[query] === 'boolean') {
+      parameters.push({ name: query, in: "query", schema: { type: "string" }, required: params.querystrings[query] })
+      integrationParams[`integration.request.querystring.${query}`] = `method.request.querystring.${query}`
+    } else if (typeof params.querystrings[query].value === 'boolean') {
+      parameters.push({ name: query, in: "query", schema: { type: "string" }, required: params.querystrings[query].value })
+      integrationParams[`integration.request.querystring.${query}`] = `method.request.querystring.${query}`
+    } else {
+      integrationParams[`integration.request.querystring.${query}`] = `'${params.querystrings[query] || params.querystrings[query].value}'`
     }
   }
 
-  await removeMethods({ apig, apiId, endpoints: outdatedEndpoints })
-  await removeAuthorizers({ apig, apiId, endpoints: outdatedAuthorizers })
-  await removeResources({ apig, apiId, endpoints: outdatedEndpoints })
-
-  return outdatedEndpoints
-}
-
-const removeModel = async ({ apig, apiId, model }) => {
-  const params = {
-    modelName: model.title,
-    restApiId: apiId
-  }
-
-  await apig.deleteModel(params).promise()
-
-  return model
-}
-
-const removeModels = async ({ apig, apiId, models }) => {
-  const promises = []
-
-  for (const model of models) {
-    promises.push(removeModel({ apig, apiId, model }))
-  }
-
-  await Promise.all(promises)
-
-  return models
-}
-
-const removeOutdatedModels = async ({ apig, apiId, models, stateModels }) => {
-  const outdatedModels = []
-
-  for (const stateModel of stateModels) {
-    const modelsInUse = models.find(
-      (model) => model.title === stateModel.title
-    )
-
-    if (!modelsInUse) {
-      outdatedModels.push(stateModel)
+  for (let header in params.headers) {
+    if (typeof params.headers[header] === 'boolean') {
+      parameters.push({ name: header, in: "header", schema: { type: "string" }, required: params.headers[header] })
+      integrationParams[`integration.request.header.${header}`] = `method.request.header.${header}`
+    } else if (typeof params.headers[header].value === 'boolean') {
+      parameters.push({ name: header, in: "header", schema: { type: "string" }, required: params.headers[header].value })
+      integrationParams[`integration.request.header.${header}`] = `method.request.header.${header}`
+    } else {
+      integrationParams[`integration.request.header.${header}`] = `'${params.headers[header] || params.headers[header].value}'`
     }
   }
 
-  await removeModels({ apig, apiId, models: outdatedModels })
+  const paths = path.match(/[^{\}]+(?=})/g)
+  if (paths && paths.length) {
+    for (let p of paths) {
+      parameters.push({ name: p, in: "path", schema: { type: "string" }, required: true })
+      integrationParams[`integration.request.path.${p}`] = `method.request.path.${p}`
+    }
 
-  return outdatedModels
+    for (let p in params.paths) {
+      integrationParams[`integration.request.path.${p}`] = params.paths[p] || params.paths[p].value
+    }
+  }
+
+  return {parameters, integrationParams}
+}
+
+const setPathResponses = ({resps}) => {
+  const responses = {}, integrationResponses = {}
+  for (let response of resps) {
+    responses[response.code] = { "description": `${response.code} response`}
+    integrationResponses[response.code] = {}
+
+    for (let header in response.headers) {
+      responses[response.code].headers = responses[response.code].headers || {}
+      responses[response.code].headers[header] = {schema:{type:"string"}}
+      integrationResponses[response.code].statusCode = `${response.code}`
+      integrationResponses[response.code].responseParameters = {}
+      integrationResponses[response.code].responseParameters[`method.response.header.${header}`] = response.headers[header]
+    }
+
+    if (response.template) {
+      integrationResponses[response.code].responseTemplates = { "application/json": response.template }
+    }
+  }
+
+  return {responses, integrationResponses}
+}
+
+const createDeployment = async ({ apig, apiId, stage, deploymentDescription }) => {
+  const deployment = await apig.createDeployment({ 
+    restApiId: apiId, 
+    stageName: stage, 
+    description: deploymentDescription
+  }).promise()
+
+  return deployment.id
+}
+
+const removeApi = async ({ apig, apiId }) => {
+  try {
+    await apig.deleteRestApi({ restApiId: apiId }).promise()
+  } catch (e) {}
 }
 
 module.exports = {
-  validateEndpointObject,
-  validateEndpoint,
-  validateEndpoints,
-  validateModel,
-  validateModels,
-  endpointExists,
-  myEndpoint,
   apiExists,
   createApi,
-  getPathId,
-  createAuthorizer,
-  createAuthorizers,
   createDeployment,
-  createIntegration,
-  createIntegrations,
-  createIntegrationResponse,
-  createIntegrationResponses,
-  createMethod,
-  createMethods,
-  createMethodResponse,
-  createMethodResponses,
-  createModel,
-  createModels,
-  createPath,
-  createPaths,
+  createDocumentation,
   enableCORS,
   flattenArrays,
-  mergeEndpointObjects,
-  mergeModelObjects,
-  removeMethod,
-  removeMethods,
-  removeModel,
-  removeModels,
-  removeResource,
-  removeResources,
-  removeAuthorizer,
-  removeAuthorizers,
   removeApi,
-  removeOutdatedEndpoints,
-  removeOutdatedModels,
-  retry,
-  updateApi
+  updateApi,
+  createModels,
+  createPaths,
+  addLambdaPermissions
 }

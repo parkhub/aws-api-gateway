@@ -6,7 +6,7 @@
     "access": "public"
   },
   "scripts": {
-    "test": "echo \"No test specified\"",
+    "test": "node serverless_test.js",
     "lint": "eslint . --fix --cache"
   },
   "author": "Serverless, Inc.",
@@ -14,7 +14,8 @@
   "dependencies": {
     "@serverless/core": "^1.0.0",
     "aws-sdk": "^2.0.0",
-    "p-retry": "^4.1.0"
+    "p-retry": "^4.1.0",
+    "yaml": "^1.7.2"
   },
   "devDependencies": {
     "babel-eslint": "9.0.0",

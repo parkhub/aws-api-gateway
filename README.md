@@ -19,9 +19,8 @@ The complete AWS API Gateway Framework, powered by [Serverless Components](https
 ## Table of Contents
 
 1. [Install](#1-install)
-2. [Create](#2-create)
-3. [Configure](#3-configure)
-4. [Deploy](#4-deploy)
+2. [Configure](#3-configure)
+3. [Deploy](#4-deploy)
 
 ### 1. Install
 
@@ -29,150 +28,92 @@ The complete AWS API Gateway Framework, powered by [Serverless Components](https
 $ npm install -g serverless
 ```
 
-### 2. Create
-
-Just create the following simple boilerplate:
-
-```shell
-$ touch serverless.yml # more info in the "Configure" section below
-$ touch index.js       # your lambda code
-$ touch .env           # your AWS api keys
-```
-
-```
-# .env
-AWS_ACCESS_KEY_ID=XXX
-AWS_SECRET_ACCESS_KEY=XXX
-```
-
-the `index.js` file should look something like this:
-
-
-```js
-
-module.exports.createUser = async (e) => {
-  return {
-    statusCode: 200,
-    body: 'Created User'
-  }
-}
-
-module.exports.getUsers = async (e) => {
-  return {
-    statusCode: 200,
-    body: 'Got Users'
-  }
-}
-
-module.exports.auth = async (event, context) => {
-  return {
-    principalId: 'user',
-    policyDocument: {
-      Version: '2012-10-17',
-      Statement: [
-        {
-          Action: 'execute-api:Invoke',
-          Effect: 'Allow',
-          Resource: event.methodArn
-        }
-      ]
-    }
-  }
-}
-
-```
-
-Keep reading for info on how to set up the `serverless.yml` file.
-
-### 3. Configure
+### 2. Configure
 You can configure the component to either create a new REST API from scratch, or extend an existing one.
 
 #### Creating REST APIs
 You can create new REST APIs by specifying the endpoints you'd like to create, and optionally passing a name 
 and description for your new REST API. You may also choose between a lambda proxy, or http integration by 
-using the function or URI field respectively.
+using the function or URI field respectively. The default api settings are: 
+```json
+{
+  name: 'Test API',
+  region: 'us-east-1',
+  description: 'Public API',
+  minimumCompressionSize: 1048576,
+  binaryMediaTypes: ['multipart/form-data'],
+  deploymentDescription: new Date().toISOString(),
+  mode: 'overwrite'
+}
+```
+
+The following is an example with all available options:
 
 ```yml
-# serverless.yml
-
-createUser:
-  component: "@serverless/aws-lambda"
-  inputs:
-    code: ./code
-    handler: index.createUser
-getUsers:
-  component: "@serverless/aws-lambda"
-  inputs:
-    code: ./code
-    handler: index.getUsers
-auth:
-  component: "@serverless/aws-lambda"
-  inputs:
-    code: ./code
-    handler: index.auth
-
 restApi:
-  component: "@serverless/aws-api-gateway"
+  component: "@parkhub/aws-api-gateway"
   inputs:
-    description: Serverless REST API
+    name: Developer API
+    description: Rest API
+    minimumCompressionSize: 1048576
+    binaryMediaTypes:
+      - multipart/form-data
+    deploymentDescription: "Deploying api"
+    stage: dev
+    cors: true
+    mode: merge
     endpoints:
-      - path: /users
-        method: POST
-        function: ${createUser.arn}
-        authorizer: ${auth.arn}
-      - path: /users
-        method: GET
-        function: ${getUsers.arn}
-        authorizer: ${auth.arn}
+      - path: /events
+        mehtod: GET
+        function: getEvents-${stage} # refer to functions with name only
+        authorizer: authorize-events # custom lambda authorizer supported
 
-        # create a resource with a variable in the path
-      - path: /users/{ID}
-        method: PUT
-        # The above path makes ID available to use in your uri
-        URI: https://example.com/users/{ID}
-        # authorizer also take a name for existing endpoints
-        authorizer: auth-dev
-        # params sets method and integration request headers and querystring parameters
-        params:
-          headers:
-            auth: true  # keys with a boolean value state whether it is required or not
-            policy: users-mod
+      - path: /events
+        method: POST
+        URI: http://friendsofyoda.com/events/search
+        authorizer: authorize-events  # lambda function name
+        model: PostEventsInput          # Request Model
+
+        # velocity template on request
+        template: |-
+           #set($root = $input.path('$.events')
+           $root
+
+        params: # sets querystrings and headers, path parameters are pulled from the path key
           querystrings:
-            name: true
-            status: active # keys with a string value creates a corresponding static variable in integration request only
+            active: true # true or false denotes required or not
+            type: starwars # allows hardcoded string parameters
+          headers:
+            Authentication: true # same logic as querystrings applies to headers
+
+        # sets Method and Integrations responses
+        responses:
+          - code: 200
+            model: PostEventsOutput
+            # velocity template on response for specific response
+            template: |-
+               #set($root = $input.path('$.events')
+               $root
+            headers:  # automatically set by `cors: true` but you can override
+              "Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+              "Access-Control-Allow-Methods": "'GET,OPTIONS,POST,PUT,PATCH,DELETE'",
+              "Access-Control-Allow-Origin": "'*'"
+         
+          - *errorCodes  # These are usually redundant so the responses object is flattened which allows merging arrays
+
+    models:  # the order you define models matter if they depend on eachother
+        - title: PosteventsInput # title is required, it is used to name the model
+          type: object
+          properties:
+              here:            # its just standard json schema
+                 type: string
+              $ref: '#components/schema/ModelName' # oas3 routing is used for reference
 ```
 
 #### Extending REST APIs
-You can extend existing REST APIs by specifying the REST API ID. This will **only** create, remove & manage the specified endpoints without removing or disrupting other endpoints.
+You can extend existing REST APIs by specifying the REST API ID and setting mode to 'merge'. This will not delete endpoints and models not in your serverless.yml
 
-```yml
-# serverless.yml
-
-createUser:
-  component: "@serverless/aws-lambda"
-  inputs:
-    code: ./code
-    handler: index.createUser
-getUsers:
-  component: "@serverless/aws-lambda"
-  inputs:
-    code: ./code
-    handler: index.getUsers
-
-restApi:
-  component: "@serverless/aws-api-gateway"
-  inputs:
-    id: qwertyuiop # specify the REST API ID you'd like to extend
-    endpoints:
-      - path: /users
-        method: POST
-        function: ${createUser.arn}
-      - path: /users
-        method: GET
-        function: ${getUsers.arn}
-```
-
-### 4. Deploy
+### 3. Deploy
 
 ```shell
 $ serverless
