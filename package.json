@@ -6,7 +6,7 @@
     "access": "public"
   },
   "scripts": {
-    "test": "node serverless_test.js",
+    "test": "echo no tests yet",
     "lint": "eslint . --fix --cache"
   },
   "author": "Serverless, Inc.",
