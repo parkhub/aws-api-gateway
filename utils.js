@@ -95,56 +95,38 @@ const createModels = ({ template, models }) => {
   return template
 }
 
-const createAuthorizer = async ({ apig, lambda, apiId, endpoint}) => {
-  if (endpoint.authorizer.slice(0, 4) !== "arn:") {
-    const func = await lambda.getFunction({ FunctionName: endpoint.authorizer }).promise()
-    endpoint.authorizer = func.Configuration.FunctionArn
-  }
-  const authorizerName = endpoint.authorizer.split(':')[6]
-  const region = endpoint.authorizer.split(':')[3]
-  const accountId = endpoint.authorizer.split(':')[4]
+const createAuthorizers = async ({ template, endpoints, lambda, region }) => {
+  const authorizers = []
+  template.components.securitySchemes = { api_key: { type: 'apiKey', name: 'x-api-key', in: 'header' } }
+  for (let endpoint of endpoints) {
+    let authorizer = endpoint.authorizer
 
-  const authorizers = await apig.getAuthorizers({ restApiId: apiId }).promise()
+    if (authorizer) {
+      const created = authorizers.find(ele => ele === authorizer)
 
-  let authorizer = authorizers.items.find(
-    (authorizerItem) => authorizerItem.name === authorizerName
-  )
+      if (!created) {
+        const arn = await getLambda({ func: authorizer, lambda })
 
-  if (!authorizer) {
-    const createAuthorizerParams = {
-      name: authorizerName,
-      restApiId: apiId,
-      type: 'TOKEN',
-      authorizerUri: `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${endpoint.authorizer}/invocations`,
-      identitySource: 'method.request.header.Auth'
-    }
+        template.components.securitySchemes[authorizer] = {
+          type: 'apiKey',
+          name: 'Authorization',
+          in: 'header',
+          'x-amazon-apigateway-authtype': 'custom',
+          'x-amazon-apigateway-authorizer': {
+            authorizerUri: `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${arn}/invocations`,
+            authorizerResultTtlInSeconds: 30,
+            type: 'token'
+          }
+        }
 
-    authorizer = await apig.createAuthorizer(createAuthorizerParams).promise()
-
-    const permissionsParams = {
-      Action: 'lambda:InvokeFunction',
-      FunctionName: authorizerName,
-      Principal: 'apigateway.amazonaws.com',
-      SourceArn: `arn:aws:execute-api:${region}:${accountId}:${apiId}/*/*`,
-      StatementId: `${authorizerName}-${apiId}`
-    }
-
-    try {
-      await lambda.addPermission(permissionsParams).promise()
-    } catch (error) {
-      if (error.code != 'ResourceConflictException') {
-        throw error
+        authorizers.push(authorizer)
       }
     }
-
-    return authorizer
-  } else {
-    return authorizer
   }
+  return template
 }
 
-const createPaths = async ({ template, endpoints, apig, lambda, apiId, region }) => {
-  const authorizers = []
+const createPaths = async ({ template, endpoints, lambda, region }) => {
   for (let endpoint of endpoints) {
     if (!endpoint.path || !endpoint.method) {
       throw Error('Endpoints must have method and path')
@@ -153,16 +135,6 @@ const createPaths = async ({ template, endpoints, apig, lambda, apiId, region })
     template.paths[endpoint.path] = template.paths[endpoint.path] || {}
     template.paths[endpoint.path][endpoint.method.toLowerCase()] = {}
     const path = template.paths[endpoint.path][endpoint.method.toLowerCase()]
-
-    let authorizer = endpoint.authorizer
-    if (endpoint.authorizer) {
-      const created = authorizers.find(ele => ele.name === endpoint.authorizer)
-
-      if (!created) {
-        authorizer = await createAuthorizer({apig, lambda, apiId, endpoint})
-        authorizers.push(authorizer)
-      }
-    }
 
     path["x-amazon-apigateway-integration"] = {}
     if (endpoint.params) {
@@ -185,7 +157,7 @@ const createPaths = async ({ template, endpoints, apig, lambda, apiId, region })
     path.security = [{"api_key":[]}]
     if (endpoint.authorizer) {
       const obj = {}
-      obj[authorizer.name] = []
+      obj[endpoint.authorizer] = []
       path.security.push(obj)
     }
 
@@ -375,6 +347,7 @@ const removeApi = async ({ apig, apiId }) => {
 module.exports = {
   apiExists,
   createApi,
+  createAuthorizers,
   createDeployment,
   createDocumentation,
   enableCORS,

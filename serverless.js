@@ -4,6 +4,7 @@ const { Component } = require('@serverless/core')
 const {
   apiExists,
   createApi,
+  createAuthorizers,
   createDeployment,
   enableCORS,
   flattenArrays,
@@ -52,7 +53,14 @@ class AwsApiGateway extends Component {
     }
 
     this.context.status('Creating New Api Template')
-    let template = { openapi: "3.0.1", "info": {}, "paths": {}, "components": {} }
+    let template = {
+      "openapi": "3.0.1",
+      "info": {},
+      "schemes": ["https"],
+      "securityDefinitions":{"api_key":{"type":"apiKey", "name": "x-api-key", "in":"header"}},
+      "paths": {},
+      "components": {}
+    }
 
     flattenArrays(config)
     if (cors) {
@@ -69,7 +77,10 @@ class AwsApiGateway extends Component {
     template = createModels({ template, models })
 
     this.context.debug('Create Paths Objects')
-    template = await createPaths({ template, endpoints, apig, apiId, lambda, region: config.region })
+    template = await createPaths({ template, endpoints, lambda, region: config.region })
+
+    this.context.debug('Creating Authorizers')
+    template = await createAuthorizers({ template, endpoints, lambda, region: config.region })
 
     // this.context.debug('Create Documentation')
     // template = createDocumentation({ template, endpoints, models })
@@ -80,6 +91,7 @@ class AwsApiGateway extends Component {
       failOnWarnings: false,
       mode: mode
     }).promise()
+
     this.context.debug(`Applied template to API ${apiId}:` + '\n' + `${res}`)
 
     this.context.debug('Adding Permissions To Lambda Functions')
@@ -87,7 +99,6 @@ class AwsApiGateway extends Component {
 
     this.context.debug('Deploying')
     await createDeployment({ apig, apiId, deploymentDescription, stage: config.stage })
-    console.log(template.paths['/permits'].post);
     
     return template
   }
