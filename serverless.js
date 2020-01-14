@@ -91,8 +91,7 @@ class AwsApiGateway extends Component {
       failOnWarnings: false,
       mode: mode
     }).promise()
-
-    this.context.debug(`Applied template to API ${apiId}:` + '\n' + `${res}`)
+    this.context.debug(`Applied template to API ${apiId}:` + '\n' + `${JSON.stringify(res, null, '\t')}`)
 
     this.context.debug('Adding Permissions To Lambda Functions')
     await addLambdaPermissions({ endpoints, apiId, lambda, region: config.region })

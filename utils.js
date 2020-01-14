@@ -163,9 +163,9 @@ const createPaths = async ({ template, endpoints, lambda, region }) => {
 
     path["x-amazon-apigateway-integration"].passthroughBehavior = "when_no_match"
 
-    if (endpoint.template)
-      path.requestTemplates = {"application/json": path.template}
-
+    if (endpoint.template){
+      path["x-amazon-apigateway-integration"].requestTemplates = {"application/json": endpoint.template}
+    }
     if (endpoint.method === 'OPTIONS') {
       path["x-amazon-apigateway-integration"].type = 'mock'
     } else {
@@ -183,6 +183,16 @@ const createPaths = async ({ template, endpoints, lambda, region }) => {
 
     if (endpoint.validator) {
       setValidator({ validator: endpoint.validator, template, endpoint })
+    }
+
+    if (endpoint.model) {
+      path.requestBody = {
+        required: true,
+        content: {
+          'application/json': {schema: {'$ref': `#/components/schemas/${endpoint.model}`}}
+        },
+        required: true
+      }
     }
   }
 
@@ -316,12 +326,18 @@ const setPathResponses = ({resps}) => {
       responses[response.code].headers = responses[response.code].headers || {}
       responses[response.code].headers[header] = {schema:{type:"string"}}
       integrationResponses[response.code].statusCode = `${response.code}`
-      integrationResponses[response.code].responseParameters = {}
+      integrationResponses[response.code].responseParameters = integrationResponses[response.code].responseParameters || {}
       integrationResponses[response.code].responseParameters[`method.response.header.${header}`] = response.headers[header]
     }
 
     if (response.template) {
       integrationResponses[response.code].responseTemplates = { "application/json": response.template }
+    }
+
+    if (response.model) {
+      responses[response.code].content = {
+        'application/json': { schema: { '$ref': `#/components/schemas/${response.model}` } }
+      }
     }
   }
 
