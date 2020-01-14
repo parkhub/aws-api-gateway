@@ -57,6 +57,7 @@ const enableCORS = ({ endpoints }) => {
         method: "OPTIONS",
         type: "MOCK",
         responses: defaultResponse,
+        params:{},
         path: endpoint.path
       }
       endpoints.push(optionParams)
