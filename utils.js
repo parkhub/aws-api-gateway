@@ -80,7 +80,7 @@ const enableCORS = ({ endpoints }) => {
 const updateApi = ({ template, name, description, binaryMediaTypes, minimumCompressionSize }) => {
   template.info.title = name
   template.info.description = description
-  template.info.version = "2016-09-12T17:50:37Z"
+  template.info.version = new Date().toISOString()//"2016-09-12T17:50:37Z"
   template["x-amazon-apigateway-minimum-compression-size"] = minimumCompressionSize
   template["x-amazon-apigateway-binary-media-types"] = binaryMediaTypes
   return template
@@ -201,19 +201,80 @@ const createPaths = async ({ template, endpoints, lambda, region }) => {
 }
 
 const createDocumentation = ({ template, endpoints, models }) => {
-  for (let endpoint of endpoints) {
-    if (endpoint.description) {
+  template['x-amazon-apigateway-documentation'] = {version: '1', createdDate: new Date().toISOString(), documentationParts: []}
+  const parts = template['x-amazon-apigateway-documentation'].documentationParts
 
+  for (let endpoint of endpoints) {
+    const part = {
+      location: {
+        type: "METHOD",
+        path: endpoint.path,
+        method: endpoint.method
+      }
     }
 
+    const endpointPart = Object.assign(part,{properties: {tags:[]}})
+
+    endpointPart.properties.summary = endpoint.description || ""
+
+    const tag = endpoint.tag || endpoint.path.split('/')[1].toUpperCase()
+    endpointPart.properties.tags.push(tag)
+    parts.push(endpointPart)
+
     if (endpoint.params) {
-      for (let query in endpoint.params.querystrings) {}
-      for (let header in endpoint.params.headers) {}
-      for (let path in endpoint.params.paths) {}
+      for (let query in endpoint.params.querystrings) {
+        const queryPart = Object.assign(part, {location:{type: "QUERY_PARAMETER"}, properties: {description:""}})
+
+        queryPart.location.name = query.name || query
+        queryPart.properties.description = query.description || ""
+        parts.push(queryPart)
+      }
+
+      for (let header in endpoint.params.headers) {
+        const headerPart = Object.assign(part, {location:{type: "REQUEST_HEADER"}, properties: {description:""}})
+
+        headerPart.location.name = header.name || header
+        headerPart.properties.description = header.description || ""
+        parts.push(headerPart)
+      }
+
+      for (let path in endpoint.params.paths) {
+        const pathPart = Object.assign(part, {location:{type: "PATH_PARAMETER"}, properties: { description: "" }})
+
+        pathPart.location.name = path.name || header
+        pathPart.properties.description = path.description || ""
+        parts.push(pathPart)
+      }
+    }
+
+    if (endpoint.responses) {
+      for (let response of endpoint.responses) {
+        const responsePart = Object.assign(part, {location:{type: "RESPONSE"}, properties: {description:""}})
+
+        responsePart.location.statusCode = response.code
+        responsePart.properties.description = response.description || ""
+        parts.push(responsePart)
+      }
     }
   }
 
-  for (let model of models) {}
+  models = models.flat()
+  for (let model of models) {
+    const modelPart = {
+      location: {
+        type: "MODEL",
+        name: model.title
+      },
+      properties: {
+        title: model.title,
+        description: model.description || ""
+      }
+    }
+
+    parts.push(modelPart)
+  }
+
+  return template
 }
 
 const setValidator = async ({validator, template, endpoint}) => {
@@ -241,26 +302,49 @@ const setValidator = async ({validator, template, endpoint}) => {
   return template
 }
 
+const addLambdaPermission = async ({func, apiId, lambda, region, endpoint}) => {
+  const accountId = func.arn.split(':')[4]
+  const statementId = endpoint.method === '*' ?
+    `${func.name}-${apiId}-${accountId}` :
+    `${func.name}-${apiId}-${endpoint.method}-${endpoint.path.split('/').join('')}`
+  const sourceArn = endpoint.method === '*' ?
+    `arn:aws:execute-api:${region}:${accountId}:${apiId}/*/${endpoint.method}` :
+    `arn:aws:execute-api:${region}:${accountId}:${apiId}/*/${endpoint.method}${endpoint.path}`
+
+  const permissionsParams = {
+    Action: 'lambda:InvokeFunction',
+    FunctionName: func.name,
+    Principal: 'apigateway.amazonaws.com',
+    SourceArn: sourceArn,
+    StatementId: statementId
+  }
+
+  try {
+    await lambda.addPermission(permissionsParams).promise()
+  } catch (e) {
+    if (e.code !== 'ResourceConflictException') {
+      throw Error(e)
+    }
+  }
+}
+
 const addLambdaPermissions = async ({ endpoints, apiId, lambda, region }) => {
   for (let endpoint of endpoints) {
     if (endpoint.function) {
       const arn = await getLambda({ func: endpoint.function, lambda })
-      const accountId = arn.split(':')[4]
-      const permissionsParams = {
-        Action: 'lambda:InvokeFunction',
-        FunctionName: endpoint.function,
-        Principal: 'apigateway.amazonaws.com',
-        SourceArn: `arn:aws:execute-api:${region}:${accountId}:${apiId}/*/${endpoint.method}${endpoint.path}`,
-        StatementId: `${endpoint.function}-${apiId}-${endpoint.method}-${endpoint.path.split('/').join('')}`
-      }
+      const func = {arn, name: endpoint.function}
 
-      try {
-        await lambda.addPermission(permissionsParams).promise()
-      } catch (e) {
-        if (e.code !== 'ResourceConflictException') {
-          throw Error(e)
-        }
-      }
+      await addLambdaPermission({func, endpoint, apiId, lambda, region})
+    }
+
+    const created = new Set()
+    if (endpoint.authorizer && !created.has(endpoint.authorizer)) {
+      created.add(endpoint.authorizer)
+      const arn = await getLambda({ func: endpoint.authorizer, lambda })
+      const func = {arn, name: endpoint.authorizer}
+      endpoint = {path: '/*', method: '*'}
+
+      await addLambdaPermission({func, endpoint, apiId, lambda, region})
     }
   }
 }

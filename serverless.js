@@ -6,6 +6,7 @@ const {
   createApi,
   createAuthorizers,
   createDeployment,
+  createDocumentation,
   enableCORS,
   flattenArrays,
   removeApi,
@@ -56,8 +57,6 @@ class AwsApiGateway extends Component {
     let template = {
       "openapi": "3.0.1",
       "info": {},
-      "schemes": ["https"],
-      "securityDefinitions":{"api_key":{"type":"apiKey", "name": "x-api-key", "in":"header"}},
       "paths": {},
       "components": {}
     }
@@ -83,7 +82,14 @@ class AwsApiGateway extends Component {
     template = await createAuthorizers({ template, endpoints, lambda, region: config.region })
 
     // this.context.debug('Create Documentation')
-    // template = createDocumentation({ template, endpoints, models })
+    // const docs = createDocumentation({ template, endpoints, models })
+    // const docRes = await apig.importDocumentationParts({
+    //   body: JSON.stringify(docs['x-amazon-apigateway-documentation']),
+    //   restApiId: apiId,
+    //   failOnWarnings: false,
+    //   mode: mode
+    // })
+    // this.context.debug(`Imported Documentation to API ${apiId}: ${JSON.stringify(docRes, null, '\t')}`)
 
     const res = await apig.putRestApi({
       body: JSON.stringify(template),
