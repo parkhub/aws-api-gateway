@@ -155,7 +155,11 @@ const createPaths = async ({ template, endpoints, lambda, region }) => {
       path.responses = {}
     }
 
-    path.security = [{"api_key":[]}]
+    const key = endpoint.apiKey != undefined ? endpoint.apiKey : true
+    if (key) {
+      path.security = [{ "api_key": [] }]
+    }
+
     if (endpoint.authorizer) {
       const obj = {}
       obj[endpoint.authorizer] = []
@@ -188,7 +192,6 @@ const createPaths = async ({ template, endpoints, lambda, region }) => {
 
     if (endpoint.model) {
       path.requestBody = {
-        required: true,
         content: {
           'application/json': {schema: {'$ref': `#/components/schemas/${endpoint.model}`}}
         },
