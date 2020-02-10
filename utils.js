@@ -205,6 +205,10 @@ const createDocumentation = ({ template, endpoints, models }) => {
   const parts = template['x-amazon-apigateway-documentation'].documentationParts
 
   for (let endpoint of endpoints) {
+    if (endpoint.method === 'OPTIONS') {
+      continue
+    }
+
     const part = {
       location: {
         type: "METHOD",
@@ -213,7 +217,7 @@ const createDocumentation = ({ template, endpoints, models }) => {
       }
     }
 
-    const endpointPart = Object.assign(part,{properties: {tags:[]}})
+    const endpointPart = Object.assign({}, part,{properties: {tags:[]}})
 
     endpointPart.properties.summary = endpoint.description || ""
 
@@ -223,33 +227,36 @@ const createDocumentation = ({ template, endpoints, models }) => {
 
     if (endpoint.params) {
       for (let query in endpoint.params.querystrings) {
-        const queryPart = Object.assign(part, {location:{type: "QUERY_PARAMETER"}, properties: {description:""}})
-
-        queryPart.location.name = query.name || query
-        queryPart.properties.description = query.description || ""
+        const queryObj = endpoint.params.querystrings[query] || {}
+        const queryPart = Object.assign({}, part, {location:{type: "QUERY_PARAMETER"}, properties: {description:""}})
+        
+        queryPart.location.name = queryObj.name || query
+        queryPart.properties.description = queryObj.description || ""
         parts.push(queryPart)
       }
 
       for (let header in endpoint.params.headers) {
-        const headerPart = Object.assign(part, {location:{type: "REQUEST_HEADER"}, properties: {description:""}})
+        const headerObj = endpoint.params.headers[header] || {}
+        const headerPart = Object.assign({}, part, {location:{type: "REQUEST_HEADER"}, properties: {description:""}})
 
-        headerPart.location.name = header.name || header
-        headerPart.properties.description = header.description || ""
+        headerPart.location.name = headerObj.name || header
+        headerPart.properties.description = headerObj.description || ""
         parts.push(headerPart)
       }
 
       for (let path in endpoint.params.paths) {
-        const pathPart = Object.assign(part, {location:{type: "PATH_PARAMETER"}, properties: { description: "" }})
+        const pathObj = endpoint.params.paths[path] || {}
+        const pathPart = Object.assign({}, part, {location:{type: "PATH_PARAMETER"}, properties: { description: "" }})
 
-        pathPart.location.name = path.name || header
-        pathPart.properties.description = path.description || ""
+        pathPart.location.name = pathObj.name || header
+        pathPart.properties.description = pathObj.description || ""
         parts.push(pathPart)
       }
     }
 
     if (endpoint.responses) {
       for (let response of endpoint.responses) {
-        const responsePart = Object.assign(part, {location:{type: "RESPONSE"}, properties: {description:""}})
+        const responsePart = Object.assign({}, part, {location:{type: "RESPONSE"}, properties: {description:""}})
 
         responsePart.location.statusCode = response.code
         responsePart.properties.description = response.description || ""

@@ -81,15 +81,8 @@ class AwsApiGateway extends Component {
     this.context.debug('Creating Authorizers')
     template = await createAuthorizers({ template, endpoints, lambda, region: config.region })
 
-    // this.context.debug('Create Documentation')
-    // const docs = createDocumentation({ template, endpoints, models })
-    // const docRes = await apig.importDocumentationParts({
-    //   body: JSON.stringify(docs['x-amazon-apigateway-documentation']),
-    //   restApiId: apiId,
-    //   failOnWarnings: false,
-    //   mode: mode
-    // })
-    // this.context.debug(`Imported Documentation to API ${apiId}: ${JSON.stringify(docRes, null, '\t')}`)
+    this.context.debug('Create Documentation')
+    template = createDocumentation({ template, endpoints, models })
 
     const res = await apig.putRestApi({
       body: JSON.stringify(template),
@@ -104,7 +97,20 @@ class AwsApiGateway extends Component {
 
     this.context.debug('Deploying')
     await createDeployment({ apig, apiId, deploymentDescription, stage: config.stage })
-    
+
+    this.context.debug('Deploying Documentation')
+    const version = ++this.state.version || 100
+    const docs = await apig.createDocumentationVersion({
+      documentationVersion: version+'',
+      restApiId: apiId,
+      description: deploymentDescription,
+      stageName: config.stage
+    }).promise()
+
+    this.state.version = version
+    await this.save()
+    this.context.debug(`Deployed documentation, ${docs}`)
+
     return template
   }
 
