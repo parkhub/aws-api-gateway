@@ -2,15 +2,8 @@
 
 The complete AWS API Gateway Framework, powered by [Serverless Components](https://github.com/serverless/components).
 
-## Features
+## Possible Future Features
 
-- Create & manage new API Gateway REST APIs with very simple configuration.
-- Extend Existing API Gateway REST APIs without disrupting other services.
-- Integrate with AWS Lambda via the [aws-lambda component](https://github.com/serverless-components/aws-lambda)
-- Authorize requests with AWS Lambda authorizers
-- Create proxy endpoints for any URL with 3 lines of code
-- Create mock endpoints by specifying the object you'd like to return (coming soon)
-- Debug API Gateway requests Via CloudWatch Logs (coming soon)
 - Protect your API with API Keys (coming soon)
 - Add usage plans to your APIs (coming soon)
 - Configure throttling & rate limits (coming soon)
