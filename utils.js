@@ -115,8 +115,9 @@ const createAuthorizers = async ({ template, endpoints, lambda, region }) => {
           'x-amazon-apigateway-authtype': 'custom',
           'x-amazon-apigateway-authorizer': {
             authorizerUri: `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${arn}/invocations`,
-            authorizerResultTtlInSeconds: 30,
-            type: 'token'
+            authorizerResultTtlInSeconds: 0,
+            identitySource: "method.request.header.Authorization",
+            type: 'request'
           }
         }
 
