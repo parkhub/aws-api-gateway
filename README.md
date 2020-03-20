@@ -2,15 +2,8 @@
 
 The complete AWS API Gateway Framework, powered by [Serverless Components](https://github.com/serverless/components).
 
-## Features
+## Possible Future Features
 
-- Create & manage new API Gateway REST APIs with very simple configuration.
-- Extend Existing API Gateway REST APIs without disrupting other services.
-- Integrate with AWS Lambda via the [aws-lambda component](https://github.com/serverless-components/aws-lambda)
-- Authorize requests with AWS Lambda authorizers
-- Create proxy endpoints for any URL with 3 lines of code
-- Create mock endpoints by specifying the object you'd like to return (coming soon)
-- Debug API Gateway requests Via CloudWatch Logs (coming soon)
 - Protect your API with API Keys (coming soon)
 - Add usage plans to your APIs (coming soon)
 - Configure throttling & rate limits (coming soon)
@@ -37,13 +30,13 @@ and description for your new REST API. You may also choose between a lambda prox
 using the function or URI field respectively. The default api settings are: 
 ```json
 {
-  name: 'Test API',
-  region: 'us-east-1',
-  description: 'Public API',
-  minimumCompressionSize: 1048576,
-  binaryMediaTypes: ['multipart/form-data'],
-  deploymentDescription: new Date().toISOString(),
-  mode: 'overwrite'
+  "name": "Test API",
+  "region": "us-east-1",
+  "description": "Public API",
+  "minimumCompressionSize": 1048576,
+  "binaryMediaTypes": ["multipart/form-data"],
+  "deploymentDescription": "new Date().toISOString()",
+  "mode": "overwrite"
 }
 ```
 
@@ -71,6 +64,7 @@ restApi:
 
       - path: /events
         method: POST
+        description: Post Events
         URI: http://friendsofyoda.com/events/search
         authorizer: authorize-events  # lambda function name
         model: PostEventsInput          # Request Model
@@ -83,6 +77,9 @@ restApi:
         params: # sets querystrings and headers, path parameters are pulled from the path key
           querystrings:
             active: true # true or false denotes required or not
+            name: 
+              value: false
+              description: "name of event" # also supports setting descriptions on querystrings for documentation
             type: starwars # allows hardcoded string parameters
           headers:
             Authentication: true # same logic as querystrings applies to headers
@@ -105,6 +102,7 @@ restApi:
     models:  # the order you define models matter if they depend on eachother
         - title: PosteventsInput # title is required, it is used to name the model
           type: object
+          description: model posteventsinput
           properties:
               here:            # its just standard json schema
                  type: string
