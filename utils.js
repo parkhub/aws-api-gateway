@@ -317,7 +317,7 @@ const addLambdaPermission = async ({func, apiId, lambda, region, endpoint}) => {
   const accountId = func.arn.split(':')[4]
   const statementId = endpoint.method === '*' ?
     `${func.name}-${apiId}-${accountId}` :
-    `${func.name}-${apiId}-${endpoint.method}-${endpoint.path.split('/').join('')}`
+    `${func.name}-${apiId}-${endpoint.method}-${endpoint.path.replace(/[{}]/g,'').split('/').join('')}`
   const sourceArn = endpoint.method === '*' ?
     `arn:aws:execute-api:${region}:${accountId}:${apiId}/*/${endpoint.method}` :
     `arn:aws:execute-api:${region}:${accountId}:${apiId}/*/${endpoint.method}${endpoint.path}`
