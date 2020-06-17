@@ -99,7 +99,7 @@ class AwsApiGateway extends Component {
     await createDeployment({ apig, apiId, deploymentDescription, stage: config.stage })
 
     this.context.debug('Deploying Documentation')
-    const version = ++this.state.version || 0
+    const version = ++this.state.version || Math.floor(Math.random() * 1000)
     const docs = await apig.createDocumentationVersion({
       documentationVersion: version+'',
       restApiId: apiId,
