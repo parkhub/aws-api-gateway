@@ -142,16 +142,16 @@ const createPaths = async ({ template, endpoints, lambda, region }) => {
     if (endpoint.params) {
       const {parameters, integrationParams} = setPathParams({params: endpoint.params, path: endpoint.path})
       path.parameters = parameters
-      if (!endpoint.proxy) {
+      if (!endpoint.function) {
         path["x-amazon-apigateway-integration"].requestParameters = integrationParams
       }
     }
 
-    if (endpoint.responses && !endpoint.proxy) {
+    if (endpoint.responses && !endpoint.function) {
       const {responses, integrationResponses} = setPathResponses({resps: endpoint.responses})
       path.responses = responses
       path["x-amazon-apigateway-integration"].responses = integrationResponses
-    } else if (endpoint.proxy) {
+    } else if (endpoint.function) {
       path["x-amazon-apigateway-integration"].responses = { default: { statusCode: "200" } }
       path.responses = {}
     }
@@ -176,8 +176,7 @@ const createPaths = async ({ template, endpoints, lambda, region }) => {
       path["x-amazon-apigateway-integration"].type = 'mock'
     } else {
       path["x-amazon-apigateway-integration"].httpMethod = endpoint.method
-      path["x-amazon-apigateway-integration"].type = endpoint.URI ? 'http' : 'aws'
-      path["x-amazon-apigateway-integration"].type += endpoint.proxy ? '_proxy' : ''
+      path["x-amazon-apigateway-integration"].type = endpoint.URI ? 'http' : 'aws_proxy'
     }
 
     if (endpoint.URI) {
