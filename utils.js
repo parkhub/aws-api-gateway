@@ -167,7 +167,7 @@ const createPaths = async ({ template, endpoints, lambda, region }) => {
       path.security.push(obj)
     }
 
-    path["x-amazon-apigateway-integration"].passthroughBehavior = "when_no_match"
+    path["x-amazon-apigateway-integration"].passthroughBehavior = "WHEN_NO_TEMPLATES"
 
     if (endpoint.template){
       path["x-amazon-apigateway-integration"].requestTemplates = {"application/json": endpoint.template}
