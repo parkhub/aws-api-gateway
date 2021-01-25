@@ -8,14 +8,112 @@ The complete AWS API Gateway Framework, powered by [Serverless Components](https
 - Extend Existing API Gateway REST APIs without disrupting other services.
 - Integrate with AWS Lambda via the [aws-lambda component](https://github.com/serverless-components/aws-lambda)
 - Authorize requests with AWS Lambda authorizers
-- Create proxy endpoints for any URL with 3 lines of code (coming soon)
-- Create mock endpoints by specifying the object you'd like to return (coming soon)
-- Debug API Gateway requests Via CloudWatch Logs (coming soon)
-- Protect your API with API Keys (coming soon)
-- Add usage plans to your APIs (coming soon)
-- Configure throttling & rate limits (coming soon)
-- Trace requests with AWS X-Ray (coming soon)
 
+(coming soon)
+- Serverless custom endpoints
+- HTTP API endpoints (websockets and apigatewayv2 endpoints)
+- apikey management
+- domain name management
+
+## Options
+
+You have two sets of options, base options that apply to the whole gateway and per endpoint options. The base options appear under the inputs field of the base object below, all are optional:
+  ```yaml
+  restApi:
+    component: "@parkhub/aws-api-gateway"
+    inputs:
+      name: API Name
+      id: ID of existing api
+      description: Description of API purpose
+      minimumCompressionSize: 1048575       # Set size that gateway starts compressing return size
+      binaryMediaTypes:                     # Extra media types to add to gateway
+        - multipart/form-data
+      deploymentDescription: description
+      stage: development
+      mode: update mode (merge | overwrite)
+      cors: true                            # Setup Cross-Origin
+  ```
+  
+  The above default as:
+  ```js
+{
+  name: 'Test API',
+  region: 'us-east-1',
+  description: 'Public API',
+  minimumCompressionSize: 1048576,
+  binaryMediaTypes: ['multipart/form-data'],
+  deploymentDescription: new Date().toISOString(),
+  mode: 'overwrite'
+}
+  ```
+  
+Per Endpoint options are set on each of the elements of the endpoint array. Currently two types of enpoints are accepted custom http and lambda proxy. You use http by specifying a `URI` to hit and lambda by specifying a `function`. Function trumps url.
+```yaml
+restApi:
+  component: "@parkhub/aws-api-gateway"
+  inputs:
+    description: Serverless REST API
+    endpoints:
+      - path: /users
+        method: POST
+        function: Function Name
+        authorizer: Authorizer Name
+      - path: /users
+        method: GET
+        URI: http://example.com/users
+```
+
+  - path: gateway path
+  - method: gateway method
+  - function: lambda proxy function name (required if no URI)
+  - URI: uri of the service endpoint to hit
+  - authorizer: Gateway authorizer name
+  - validator: gateway input validator (0: Body, 1:BodyAndParams, 2: Params, def: NONE)
+  - params: input parameters to setup
+    - path: path is setup from root path, param path is used for documentation only
+    - querystrings: takes either {key:bool} for simple required/not, {key:obj} for documentation, and {key:string} for hardcoding a value
+      - key:
+        - value: Bool (required/not)
+        - type: documenting type
+        - def:  documenting default
+        - example:  documenting example
+        - description:  documenting description
+  - headers: takes the same set of values as params
+   - keys:
+    - value
+    - description
+ - template: string velocity code for input transformation
+ - responses: array of objects
+    - code: http return code
+    - model: json schema for validating return
+    - template: velocity code for output transformation
+  
+## Recommendations
+Use @parkhub/config https://github.com/parkhub/config to setup environment and stage variables and handle them in the configuration. With the config endpoint you can pass flags with defaults, import other yaml files and setup variables that can use eachother as variables to make env changes simple and automatic.
+```yaml
+config:
+  component: "@parkhub/config"
+  inputs:
+    flags:
+      stage: dev
+    files:
+      outputModels: "./outputModels.yml"
+      inputModels: "./inputModels.yml"
+    environment:
+      HOST: (custom.(flags.stage)-host)
+    custom:
+      dev-host: http://dev.example.com
+      qa-host: http://qa.example.com
+```
+
+For reusable configurations use yaml pointers and other conviences. Declare them at the top of the file and reference them later.
+```yaml
+headers: &headers
+  Content-type: application/json
+  
+*headers
+```
+# Example
 ## Table of Contents
 
 1. [Install](#1-install)
@@ -116,12 +214,12 @@ restApi:
     endpoints:
       - path: /users
         method: POST
-        function: ${createUser.arn}
-        authorizer: ${auth.arn}
+        function: ${createUser.name}
+        authorizer: ${auth.name}
       - path: /users
         method: GET
         function: ${getUsers.arn}
-        authorizer: ${auth.arn}
+        authorizer: ${auth.name}
       - path: /users
         method: PUT
         proxyURI: https://example.com/users
@@ -152,10 +250,10 @@ restApi:
     endpoints:
       - path: /users
         method: POST
-        function: ${createUser.arn}
+        function: ${createUser.name}
       - path: /users
         method: GET
-        function: ${getUsers.arn}
+        function: ${getUsers.name}
 ```
 
 ### 4. Deploy
